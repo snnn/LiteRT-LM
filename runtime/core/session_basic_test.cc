@@ -33,12 +33,9 @@ class SessionBasicTest : public testing::Test {
     tokenizer_ = std::move(tokenizer_or.value());
     // The prefill tokens are the expected tokens that will be passed in at each
     // time the Prefill function is called. The values are the token ids of the
-    // input prompt "Hello World!" surrounded by the start/end of turn prompt
-    // template and prepended with the bos token id (2).
+    // input prompt "Hello World!".
     std::vector<std::vector<int>> prefill_tokens = {
-        {2,   4,  0,   202, 3764, 0,    751, 0,  1972, 0, 555,  179, 90,
-         547, 58, 735, 210, 466,  2294, 0,   40, 23,   0, 751,  0,   1972,
-         0,   4,  0,   202, 3764, 0,    751, 0,  1972, 0, 3065, 23,  3076}};
+        {2, 90, 547, 58, 735, 210, 466,  2294}};
     // The decode tokens are the expected tokens that will be returned by the
     // Decode function. The values are the token ids of the output response
     // "How's it going?" followed by the stop token id (2294).

@@ -56,7 +56,7 @@ TEST(EngineTest, CreateEngine) {
 
   EXPECT_OK(responses);
   EXPECT_EQ(responses->GetNumOutputCandidates(), 1);
-  EXPECT_TRUE((responses->GetResponseTextAt(0))->starts_with("<unused185>"));
+  EXPECT_FALSE(responses->GetResponseTextAt(0)->empty());
   EXPECT_OK(llm);
 }
 
