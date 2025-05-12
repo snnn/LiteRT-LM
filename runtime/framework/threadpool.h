@@ -19,7 +19,9 @@
 #include <memory>
 #include <string>
 
+#include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/statusor.h"  // from @com_google_absl
+#include "absl/time/time.h"  // from @com_google_absl
 #include "runtime/framework/thread_options.h"
 
 namespace litert::lm {
@@ -64,6 +66,19 @@ class ThreadPool {
   // this does not guarantee that the callback is executed in the order it was
   // scheduled.
   virtual void Schedule(std::function<void()> callback) = 0;
+
+  // Waits until the task queue is empty. The function will return an error if
+  // the timeout is reached before the task queue is empty.
+  // Note that this only indicates that there are no pending callbacks in the
+  // queue, and does not guarantee that all scheduled callbacks have finished
+  // executing. This is helpful for the caller to get a sense about the status
+  // of the pool, but should not be used for synchronization.
+  virtual absl::Status WaitUntilIdle(absl::Duration timeout) = 0;
+
+  // Waits until all the scheduled callbacks are executed and finished. The
+  // function will return an error if the timeout is reached before all the
+  // callbacks are finished.
+  virtual absl::Status WaitUntilDone(absl::Duration timeout) = 0;
 
   // Provided for debugging and testing only.
   // The number of threads in the pool.

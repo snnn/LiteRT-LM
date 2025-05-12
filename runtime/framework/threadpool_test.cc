@@ -20,6 +20,8 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include "absl/synchronization/mutex.h"  // from @com_google_absl
+#include "absl/time/clock.h"  // from @com_google_absl
+#include "absl/time/time.h"  // from @com_google_absl
 #include "runtime/framework/thread_options.h"
 
 namespace litert::lm {
@@ -118,27 +120,55 @@ TEST(ThreadPoolTest, CreateWithCPUAffinity) {
   thread_pool.StartWorkers();
 }
 
-TEST(ThreadPoolTest, SingleThreadSequentialTasks) {
+TEST(ThreadPoolTest, WaitUntilIdle) {
   absl::Mutex mu;
   std::vector<int> v;
-  {
-    auto thread_pool_ptr =
-        ThreadPool::CreateThreadPool(ThreadOptions(), "testpool", 1);
-    EXPECT_OK(thread_pool_ptr);
-    ThreadPool& thread_pool = **thread_pool_ptr;
-    EXPECT_EQ(1, thread_pool.num_threads());
-    thread_pool.StartWorkers();
 
-    for (int i = 0; i < 10; ++i) {
-      thread_pool.Schedule([&v, &mu, i]() mutable {
-        absl::MutexLock l(&mu);
-        v.push_back(i);
-      });
-    }
+  auto thread_pool_ptr =
+      ThreadPool::CreateThreadPool(ThreadOptions(), "testpool", 1);
+  EXPECT_OK(thread_pool_ptr);
+  ThreadPool& thread_pool = **thread_pool_ptr;
+  EXPECT_EQ(1, thread_pool.num_threads());
+  thread_pool.StartWorkers();
+
+  for (int i = 0; i < 10; ++i) {
+    thread_pool.Schedule([&v, &mu, i]() mutable {
+      absl::MutexLock l(&mu);
+      // Simulate a task that takes some time to execute.
+      absl::SleepFor(absl::Milliseconds(500));
+      v.push_back(i);
+    });
   }
-  // If the tasks are executed by a single thread in the order they are
-  // scheduled, then the vector should contain the elements in the order 0, 1,
-  // 2, 3, ... 9.
+  EXPECT_OK(thread_pool.WaitUntilIdle(absl::Seconds(50)));
+  // WaitUntilIdle() should wait until the task queue is empty. Note that when
+  // the function returns, the last task is still being executed so the vector
+  // will only have 9 elements instead of 10.
+  EXPECT_THAT(v, testing::ElementsAre(0, 1, 2, 3, 4, 5, 6, 7, 8));
+}
+
+TEST(ThreadPoolTest, WaitUntilDone) {
+  absl::Mutex mu;
+  std::vector<int> v;
+
+  auto thread_pool_ptr =
+      ThreadPool::CreateThreadPool(ThreadOptions(), "testpool", 1);
+  EXPECT_OK(thread_pool_ptr);
+  ThreadPool& thread_pool = **thread_pool_ptr;
+  EXPECT_EQ(1, thread_pool.num_threads());
+  thread_pool.StartWorkers();
+
+  for (int i = 0; i < 10; ++i) {
+    thread_pool.Schedule([&v, &mu, i]() mutable {
+      absl::MutexLock l(&mu);
+      // Simulate a task that takes some time to execute.
+      absl::SleepFor(absl::Milliseconds(500));
+      v.push_back(i);
+    });
+  }
+  EXPECT_OK(thread_pool.WaitUntilDone(absl::Seconds(50)));
+  // Even without destroying the thread pool and force all threads to join,
+  // calling WaitUntilDone() should be enough to ensure that all of the
+  // scheduled tasks are executed.
   EXPECT_THAT(v, testing::ElementsAre(0, 1, 2, 3, 4, 5, 6, 7, 8, 9));
 }
 
