@@ -83,44 +83,52 @@ class EngineImpl : public Engine {
     const std::string& model_path = engine_settings.GetMainExecutorSettings()
                                         .GetModelAssets()
                                         .model_paths[0];
-    auto model_resources = BuildLiteRtCompiledModelResources(model_path);
-    ABSL_CHECK_OK(model_resources);
-    litert_model_resources_ = std::move(*model_resources);
-    auto executor = BuildLitertCompiledModelExecutor(
-        litert_model_resources_, engine_settings.GetMainExecutorSettings());
+    if ((engine_settings.GetMainExecutorSettings().GetBackend() ==
+         Backend::CPU) ||
+        (engine_settings.GetMainExecutorSettings().GetBackend() ==
+         Backend::GPU)) {
+      auto model_resources = BuildLiteRtCompiledModelResources(model_path);
+      ABSL_CHECK_OK(model_resources);
+      litert_model_resources_ = std::move(*model_resources);
+      auto executor = BuildLitertCompiledModelExecutor(
+          litert_model_resources_, engine_settings.GetMainExecutorSettings());
 
-    ABSL_QCHECK_OK(executor);
-    executor_ = std::move(*executor);
-    if (benchmark_info_.has_value()) {
-      ABSL_CHECK_OK(
-          benchmark_info_->TimeInitPhaseEnd("Executor initialization"));
-      ABSL_CHECK_OK(
-          benchmark_info_->TimeInitPhaseStart("Tokenizer initialization"));
-    }
-    // TODO(b/397975034): factor out the tokenizer creation logic once the model
-    // loading mechanism of the new file format is determined.
-    auto scoped_file = ScopedFile::Open(model_path);
-    ABSL_CHECK_OK(scoped_file);
-    auto resources = ModelAssetBundleResources::Create(
-        /*tag=*/"", *std::move(scoped_file));
-    auto vocab_buffer = (*resources)->GetFile("TOKENIZER_MODEL");
-    tokenizer_ =
-        std::move(*SentencePieceTokenizer::CreateFromBuffer(*vocab_buffer));
-    if (benchmark_info_.has_value()) {
-      ABSL_CHECK_OK(
-          benchmark_info_->TimeInitPhaseEnd("Tokenizer initialization"));
+      ABSL_QCHECK_OK(executor);
+      executor_ = std::move(*executor);
+      if (benchmark_info_.has_value()) {
+        ABSL_CHECK_OK(
+            benchmark_info_->TimeInitPhaseEnd("Executor initialization"));
+        ABSL_CHECK_OK(
+            benchmark_info_->TimeInitPhaseStart("Tokenizer initialization"));
+      }
+      // TODO(b/397975034): factor out the tokenizer creation logic once the
+      // model loading mechanism of the new file format is determined.
+      auto scoped_file = ScopedFile::Open(model_path);
+      ABSL_CHECK_OK(scoped_file);
+      auto resources = ModelAssetBundleResources::Create(
+          /*tag=*/"", *std::move(scoped_file));
+      auto vocab_buffer = (*resources)->GetFile("TOKENIZER_MODEL");
+      tokenizer_ =
+          std::move(*SentencePieceTokenizer::CreateFromBuffer(*vocab_buffer));
+      if (benchmark_info_.has_value()) {
+        ABSL_CHECK_OK(
+            benchmark_info_->TimeInitPhaseEnd("Tokenizer initialization"));
+      }
+    } else {
+      ABSL_LOG(FATAL) << "Not supported backend.";
     }
 
     // TODO(b/397975034) Add support for stop tokens loading from the model
-    // file, most likely by creating a simplified DeriveLlmModelSettingsStruct.
+    // file, most likely by creating a simplified
+    // DeriveLlmModelSettingsStruct.
     AddStopTokenIds("<eos>");
     AddStopTokenIds("<end_of_turn>");
     // TODO(b/412390852): Add logics to initialize the sampler.
 
     // Creating the thread pool of a single thread to execute the works.
-    auto thread_pool =
-        ThreadPool::CreateThreadPool(ThreadOptions(), /*name_prefix=*/"engine",
-                                     /*num_threads=*/1);
+    auto thread_pool = ThreadPool::CreateThreadPool(ThreadOptions(),
+                                                    /*name_prefix=*/"engine",
+                                                    /*num_threads=*/1);
     ABSL_CHECK_OK(thread_pool);
     worker_thread_pool_ = std::move(*thread_pool);
     worker_thread_pool_->StartWorkers();

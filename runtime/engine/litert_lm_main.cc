@@ -83,21 +83,28 @@ absl::Status MainHelper(int argc, char** argv) {
 
   std::string backend_str = absl::GetFlag(FLAGS_backend).value();
   ABSL_LOG(INFO) << "Choose backend: " << backend_str;
+  auto session_config = litert::lm::SessionConfig::CreateDefault();
   Backend backend;
   if (backend_str == "cpu") {
-    backend = Backend::CPU;
     CpuConfig config;
     config.number_of_threads = 4;
     executor_settings.SetBackendConfig(config);
+    executor_settings.SetBackend(Backend::CPU);
   } else if (backend_str == "gpu") {
     backend = Backend::GPU;
     GpuConfig config;
     config.max_top_k = 1;
     executor_settings.SetBackendConfig(config);
+    executor_settings.SetBackend(Backend::GPU);
+  } else if (backend_str == "qnn") {
+    backend = Backend::QNN;
+    executor_settings.SetBackend(Backend::QNN);
+    // The NPU executor does not support the external sampler yet.
+    session_config.GetMutableSamplerParams().set_type(
+        litert::lm::proto::SamplerParameters::TYPE_UNSPECIFIED);
   } else {
     return absl::InvalidArgumentError("Unsupported backend: " + backend_str);
   }
-  executor_settings.SetBackend(backend);
   // TODO(b/397975034) Set the max num tokens based on the model.
   executor_settings.SetMaxNumTokens(160);
   ABSL_LOG(INFO) << "executor_settings: " << executor_settings;
@@ -118,7 +125,7 @@ absl::Status MainHelper(int argc, char** argv) {
 
   ABSL_LOG(INFO) << "Creating session";
   absl::StatusOr<std::unique_ptr<litert::lm::Engine::Session>> session =
-      (*llm)->CreateSession(litert::lm::SessionConfig::CreateDefault());
+      (*llm)->CreateSession(session_config);
   ABSL_CHECK_OK(session) << "Failed to create session";
 
   const std::string input_prompt = absl::GetFlag(FLAGS_input_prompt);

@@ -45,6 +45,9 @@ enum class Backend {
 
   // Google Tensor Emission Graph backend.
   GOOGLE_TENSOR_ARTISAN,
+
+  // Qualcomm QNN backend.
+  QNN,
 };
 std::ostream& operator<<(std::ostream& os, const Backend& backend);
 
