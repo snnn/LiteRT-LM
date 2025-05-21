@@ -491,9 +491,6 @@ LlmLiteRtCompiledModelExecutor::Create(
       gpu_compilation_options->EnableAllowSrcQuantizedFcConvOps(true);
       gpu_compilation_options->SetDelegatePrecision(
           LiteRtDelegatePrecision::kLiteRtDelegatePrecisionFp16);
-      // Currently, the ML_DRIFT delegate only supports BUFFER storage type.
-      gpu_compilation_options->SetBufferStorageType(
-          kLiteRtDelegateBufferStorageTypeBuffer);
       gpu_compilation_options->SetPreferTextureWeights(true);
       if (!weight_cache_path.empty()) {
         gpu_compilation_options->SetSerializationDir(weight_cache_path.c_str());
@@ -504,6 +501,7 @@ LlmLiteRtCompiledModelExecutor::Create(
         gpu_compilation_options->SetSerializeProgramCache(false);
         gpu_compilation_options->SetSerializeExternalTensors(true);
       }
+      gpu_compilation_options->EnableNoImmutableExternalTensorsMode(true);
       compilation_options->AddOpaqueOptions(
           std::move(*gpu_compilation_options));
       compilation_options->SetHardwareAccelerators(kLiteRtHwAcceleratorGpu);
