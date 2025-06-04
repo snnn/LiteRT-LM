@@ -6,6 +6,7 @@ on:
   pull_request:
     branches:
     - main
+  workflow_dispatch:   # Manual trigger
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
@@ -42,6 +43,11 @@ jobs:
         run: |
           bazel build --disk_cache=~/.cache/bazel-linux \
           //runtime/engine:litert_lm_main
+
+      - name: Check if litert_lm_main doesn't link libLiteRtRuntimeCApi.so
+        # Return exit code 1 if libLiteRtRuntimeCApi.so is required.
+        run: |
+          ! readelf -d bazel-bin/runtime/engine/litert_lm_main | grep libLiteRtRuntimeCApi.so
 
       - name: Run bazel test on Linux
         run: |
