@@ -29,26 +29,36 @@ jobs:
       contents: write  # For gh release upload.
     env:
       GH_TOKEN: ${{ github.token }}  # For gh release upload.
+      REFRESH_CACHE: ${{ github.event_name == 'schedule' ||
+                         (github.event_name == 'workflow_dispatch' && inputs.REFRESH_CACHE) }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Restore bazel cache
-        if: >  # Restore cache only when it's not triggered to refresh the cache.
-          ! (github.event_name == 'schedule' ||
-             (github.event_name == 'workflow_dispatch' && inputs.REFRESH_CACHE))
+      - name : Set up cache keys
+        run: |
+          export CACHE_RESTORE_KEY_2="${{ github.workflow }}"
+          export CACHE_RESTORE_KEY_1="$CACHE_RESTORE_KEY_2-${{ hashFiles('**/WORKSPACE', '**/.bazelrc') }}"
+          export CACHE_RESTORE_KEY_0="$CACHE_RESTORE_KEY_1-${{ hashFiles('**/BUILD*') }}"
+          export CACHE_KEY="$CACHE_RESTORE_KEY_0-${{ github.sha }}"
+          echo "CACHE_RESTORE_KEY_2=$CACHE_RESTORE_KEY_2" >> "$GITHUB_ENV"
+          echo "CACHE_RESTORE_KEY_1=$CACHE_RESTORE_KEY_1" >> "$GITHUB_ENV"
+          echo "CACHE_RESTORE_KEY_0=$CACHE_RESTORE_KEY_0" >> "$GITHUB_ENV"
+          echo "CACHE_KEY=$CACHE_KEY" >> "$GITHUB_ENV"
+
+      - name: Restore bazel cache if cache is not being refreshed.
+        if: ${{ env.REFRESH_CACHE }} != 'true'
         uses: actions/cache/restore@v4
         id: bazel-cache
         with:
           path: |
-            ~/.cache/bazel
             ~/.cache/bazel-macos
             ~/.cache/bazel-ios
-          key: ${{ github.workflow }}-${{ hashFiles('**/WORKSPACE', '**/.bazelrc') }}-${{ hashFiles('**/BUILD*') }}-${{ github.sha }}
+          key: ${{ env.CACHE_KEY }}
           restore-keys: |
-            ${{ github.workflow }}-${{ hashFiles('**/WORKSPACE', '**/.bazelrc') }}-${{ hashFiles('**/BUILD*') }}-
-            ${{ github.workflow }}-${{ hashFiles('**/WORKSPACE', '**/.bazelrc') }}-
-            ${{ github.workflow }}-
+            ${{ env.CACHE_RESTORE_KEY_0 }}-
+            ${{ env.CACHE_RESTORE_KEY_1 }}-
+            ${{ env.CACHE_RESTORE_KEY_2 }}-
 
       - name: Check cache hit
         run: |
@@ -80,12 +90,15 @@ jobs:
           cp bazel-bin/runtime/engine/litert_lm_main litert_lm_main.ios_sim_arm64
           gh release upload ${{ github.ref_name }} litert_lm_main.ios_sim_arm64 --clobber
 
+      - name: Remove cache if cache is being refreshed.
+        if: ${{ env.REFRESH_CACHE }} == 'true'
+        run: gh cache delete ${{ env.CACHE_KEY }} || echo "Cache not found"
+
       - name: Save bazel cache if it's new and not triggered by pull request.
         uses: actions/cache/save@v4
         if: steps.bazel-cache.outputs.cache-hit != 'true' && github.event_name != 'pull_request'
         with:
           path: |
-            ~/.cache/bazel
             ~/.cache/bazel-macos
             ~/.cache/bazel-ios
-          key: ${{ github.workflow }}-${{ hashFiles('**/WORKSPACE', '**/.bazelrc') }}-${{ hashFiles('**/BUILD*') }}-${{ github.sha }}
+          key: ${{ env.CACHE_KEY }}

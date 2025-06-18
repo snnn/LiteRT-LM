@@ -27,24 +27,33 @@ jobs:
       # androidndk rulesto create symlinks.
       ANDROID_NDK_HOME:
       GH_TOKEN: ${{ github.token }}  # For gh release upload.
+      REFRESH_CACHE: ${{ github.event_name == 'workflow_dispatch' && inputs.REFRESH_CACHE }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Restore bazel cache
-        # Restore cache only when it's not triggered to refresh the cache.
-        if: ! (github.event_name == 'workflow_dispatch' && inputs.REFRESH_CACHE)
+      - name : Set up cache keys
+        run: |
+          $env:CACHE_RESTORE_KEY_2="${{ github.workflow }}"
+          $env:CACHE_RESTORE_KEY_1="$CACHE_RESTORE_KEY_2-${{ hashFiles('**/WORKSPACE', '**/.bazelrc') }}"
+          $env:CACHE_RESTORE_KEY_0="$CACHE_RESTORE_KEY_1-${{ hashFiles('**/BUILD*') }}"
+          $env:CACHE_KEY="$CACHE_RESTORE_KEY_0-${{ github.sha }}"
+          echo "CACHE_RESTORE_KEY_2=$CACHE_RESTORE_KEY_2" >> "$GITHUB_ENV"
+          echo "CACHE_RESTORE_KEY_1=$CACHE_RESTORE_KEY_1" >> "$GITHUB_ENV"
+          echo "CACHE_RESTORE_KEY_0=$CACHE_RESTORE_KEY_0" >> "$GITHUB_ENV"
+          echo "CACHE_KEY=$CACHE_KEY" >> "$GITHUB_ENV"
+
+      - name: Restore bazel cache if cache is not being refreshed.
+        if: ${{ env.REFRESH_CACHE }} != 'true'
         uses: actions/cache/restore@v4
         id: bazel-cache
         with:
-          path: |
-            ~/.cache/bazel
-            ~/.cache/bazel-windows
-          key: ${{ github.workflow }}-${{ hashFiles('**/WORKSPACE', '**/.bazelrc') }}-${{ hashFiles('**/BUILD*') }}-${{ github.sha }}
+          path: ~/.cache/bazel-windows
+          key: ${{ env.CACHE_KEY }}
           restore-keys: |
-            ${{ github.workflow }}-${{ hashFiles('**/WORKSPACE', '**/.bazelrc') }}-${{ hashFiles('**/BUILD*') }}-
-            ${{ github.workflow }}-${{ hashFiles('**/WORKSPACE', '**/.bazelrc') }}-
-            ${{ github.workflow }}-
+            ${{ env.CACHE_RESTORE_KEY_0 }}-
+            ${{ env.CACHE_RESTORE_KEY_1 }}-
+            ${{ env.CACHE_RESTORE_KEY_2 }}-
 
       - name: Check cache hit
         run: |
@@ -55,9 +64,9 @@ jobs:
       - name: Run bazel build on Windows
         run: |
           bazel build --disk_cache=~/.cache/bazel-windows `
-          --define=DISABLE_HUGGINGFACE_TOKENIZER=1 -- //... `
-          -//runtime/components:huggingface_tokenizer `
-          -//runtime/components:huggingface_tokenizer_test
+            --define=DISABLE_HUGGINGFACE_TOKENIZER=1 -- //... `
+            -//runtime/components:huggingface_tokenizer `
+            -//runtime/components:huggingface_tokenizer_test
 
       - name: Update litert_lm_main prebuilt for Windows if new version tag is pushed.
         if: github.ref_type == 'tag'
@@ -68,14 +77,16 @@ jobs:
       - name: Run bazel test on Windows
         run: |
           bazel test --disk_cache=~/.cache/bazel-windows `
-          --define=DISABLE_HUGGINGFACE_TOKENIZER=1 --test_output=errors -- //... `
-          -//runtime/components:huggingface_tokenizer_test
+            --define=DISABLE_HUGGINGFACE_TOKENIZER=1 --test_output=errors -- //... `
+            -//runtime/components:huggingface_tokenizer_test
+
+      - name: Remove cache if cache is being refreshed.
+        if: ${{ env.REFRESH_CACHE }} == 'true'
+        run: gh cache delete ${{ env.CACHE_KEY }} || echo "Cache not found"
 
       - name: Save bazel cache if new or changed on push.
         uses: actions/cache/save@v4
         if: steps.bazel-cache.outputs.cache-hit != 'true'
         with:
-          path: |
-            ~/.cache/bazel
-            ~/.cache/bazel-windows
-          key: ${{ github.workflow }}-${{ hashFiles('**/WORKSPACE', '**/.bazelrc') }}-${{ hashFiles('**/BUILD*') }}-${{ github.sha }}
+          path: ~/.cache/bazel-windows
+          key: ${{ env.CACHE_KEY }}
