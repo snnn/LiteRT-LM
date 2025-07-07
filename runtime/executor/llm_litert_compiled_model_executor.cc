@@ -655,7 +655,7 @@ LlmLiteRtCompiledModelExecutor::Create(LlmExecutorSettings executor_settings,
         gpu_compilation_options.SetSerializationDir(weight_cache_path.c_str());
         absl::string_view model_name = Basename(model_path);
         gpu_compilation_options.SetModelCacheKey(model_name.data());
-        gpu_compilation_options.SetSerializeProgramCache(false);
+        gpu_compilation_options.SetSerializeProgramCache(true);
         gpu_compilation_options.SetSerializeExternalTensors(true);
       }
       gpu_compilation_options.EnableNoImmutableExternalTensorsMode(true);
