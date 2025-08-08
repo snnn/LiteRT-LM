@@ -39,10 +39,21 @@ def main():
       required=True,
       help="The path to the LiteRT-LM file to inspect.",
   )
+  parser.add_argument(
+      "--dump_files_dir",
+      type=str,
+      default=None,
+      help=(
+          "The directory to dump the files in the LiteRT-LM file. If not"
+          " provided, the files will not be dumped."
+      ),
+  )
   args = parser.parse_args()
 
   try:
-    litertlm_peek.peek_litertlm_file(args.litertlm_file, sys.stdout)
+    litertlm_peek.peek_litertlm_file(
+        args.litertlm_file, args.dump_files_dir, sys.stdout
+    )
   except (ValueError, FileNotFoundError, struct.error) as e:
     print(f"Error processing file: {e}", file=sys.stderr)
     sys.exit(1)

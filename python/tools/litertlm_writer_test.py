@@ -44,7 +44,7 @@ class LitertlmWriterPyTest(absltest.TestCase):
 
     # Use the peek library to inspect the contents.
     output_stream = io.StringIO()
-    litertlm_peek.peek_litertlm_file(output_path, output_stream)
+    litertlm_peek.peek_litertlm_file(output_path, None, output_stream)
     peek_output = output_stream.getvalue()
 
     # Assert that the output contains expected strings.
@@ -95,7 +95,7 @@ class LitertlmWriterPyTest(absltest.TestCase):
     self.assertTrue(os.path.exists(output_path))
 
     output_stream = io.StringIO()
-    litertlm_peek.peek_litertlm_file(output_path, output_stream)
+    litertlm_peek.peek_litertlm_file(output_path, None, output_stream)
     peek_output = output_stream.getvalue()
 
     self.assertIn("SP_Tokenizer", peek_output)
@@ -146,7 +146,7 @@ class LitertlmWriterPyTest(absltest.TestCase):
     self.assertTrue(os.path.exists(output_path))
 
     output_stream = io.StringIO()
-    litertlm_peek.peek_litertlm_file(output_path, output_stream)
+    litertlm_peek.peek_litertlm_file(output_path, None, output_stream)
     peek_output = output_stream.getvalue()
     self.assertIn("SP_Tokenizer", peek_output)
     self.assertIn("HF_Tokenizer_Zlib", peek_output)
@@ -172,7 +172,7 @@ class LitertlmWriterPyTest(absltest.TestCase):
     self.assertTrue(os.path.exists(output_path))
 
     output_stream = io.StringIO()
-    litertlm_peek.peek_litertlm_file(output_path, output_stream)
+    litertlm_peek.peek_litertlm_file(output_path, None, output_stream)
     peek_output = output_stream.getvalue()
 
     self.assertIn("SP_Tokenizer", peek_output)
@@ -194,7 +194,7 @@ class LitertlmWriterPyTest(absltest.TestCase):
     self.assertTrue(os.path.exists(output_path))
 
     output_stream = io.StringIO()
-    litertlm_peek.peek_litertlm_file(output_path, output_stream)
+    litertlm_peek.peek_litertlm_file(output_path, None, output_stream)
     peek_output = output_stream.getvalue()
 
     self.assertIn("Key: lang, Value (String): fr", peek_output)

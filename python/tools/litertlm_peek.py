@@ -13,8 +13,12 @@
 
 """Library for inspecting the contents of a LiteRT-LM file."""
 
+import os
 import struct
+from typing import IO, Optional
+
 from google.protobuf import text_format
+
 from litert_lm.python.tools import litertlm_core
 from litert_lm.runtime.proto import llm_metadata_pb2
 from litert_lm.schema.core import litertlm_header_schema_py_generated as schema
@@ -26,17 +30,33 @@ ANSI_RESET = "\033[0m"
 INDENT_SPACES = 2
 
 
-def print_boxed_title(os, title, box_width=50):
-  """Prints a title surrounded by an ASCII box."""
+def print_boxed_title(
+    output_stream: IO[str], title: str, box_width: int = 50
+) -> None:
+  """Prints a title surrounded by an ASCII box.
+
+  Args:
+    output_stream: The stream to write the output to.
+    title: The title to print.
+    box_width: The width of the box.
+  """
   top_bottom = "+" + "-" * (box_width - 2) + "+"
   padding_left = (box_width - 2 - len(title)) // 2
   padding_right = box_width - 2 - len(title) - padding_left
   middle = "|" + " " * padding_left + title + " " * padding_right + "|"
-  os.write(f"{top_bottom}\n{middle}\n{top_bottom}\n")
+  output_stream.write(f"{top_bottom}\n{middle}\n{top_bottom}\n")
 
 
-def print_key_value_pair(kvp, output_stream, indent_level):
-  """Prints a formatted KeyValuePair."""
+def print_key_value_pair(
+    kvp: schema.KeyValuePair, output_stream: IO[str], indent_level: int
+) -> None:
+  """Prints a formatted KeyValuePair.
+
+  Args:
+    kvp: The KeyValuePair object.
+    output_stream: The stream to write the output to.
+    indent_level: The indentation level.
+  """
   indent_str = " " * (indent_level * INDENT_SPACES)
   if not kvp:
     output_stream.write(f"{indent_str}KeyValuePair: nullptr\n")
@@ -111,21 +131,34 @@ def print_key_value_pair(kvp, output_stream, indent_level):
     output_stream.write(f"{bold}Value{reset} (Unknown Type)\n")
 
 
-def read_litertlm_header(file_path, output_stream):
-  """Reads the header of a LiteRT-LM file and returns the metadata."""
-  with open(file_path, "rb") as f:
-    magic = f.read(8)
+def read_litertlm_header(
+    file_path: str, output_stream: IO[str]
+) -> schema.LiteRTLMMetaData:
+  """Reads the header of a LiteRT-LM file and returns the metadata.
+
+  Args:
+    file_path: The path to the LiteRT-LM file.
+    output_stream: The stream to write version info to.
+
+  Returns:
+    The LiteRTLMMetaData object.
+
+  Raises:
+    ValueError: If the file has an invalid magic number.
+  """
+  with open(file_path, "rb") as file_stream:
+    magic = file_stream.read(8)
     if magic != b"LITERTLM":
       raise ValueError(f"Invalid magic number: {magic}")
 
-    major, minor, patch = struct.unpack("<III", f.read(12))
+    major, minor, patch = struct.unpack("<III", file_stream.read(12))
     output_stream.write(f"LiteRT-LM Version: {major}.{minor}.{patch}\n\n")
 
-    f.seek(litertlm_core.HEADER_END_LOCATION_BYTE_OFFSET)
-    header_end_offset = struct.unpack("<Q", f.read(8))[0]
+    file_stream.seek(litertlm_core.HEADER_END_LOCATION_BYTE_OFFSET)
+    header_end_offset = struct.unpack("<Q", file_stream.read(8))[0]
 
-    f.seek(litertlm_core.HEADER_BEGIN_BYTE_OFFSET)
-    header_data = f.read(
+    file_stream.seek(litertlm_core.HEADER_BEGIN_BYTE_OFFSET)
+    header_data = file_stream.read(
         header_end_offset - litertlm_core.HEADER_BEGIN_BYTE_OFFSET
     )
 
@@ -133,10 +166,139 @@ def read_litertlm_header(file_path, output_stream):
     return metadata
 
 
-def peek_litertlm_file(litertlm_path, output_stream):
-  """Reads and prints information from a LiteRT-LM file."""
+def _get_tflite_model_filename(
+    section_object: schema.SectionObject, section_index: int
+) -> str:
+  """Constructs a filename for a TFLiteModel section based on the model type."""
+  model_type = None
+  for j in range(section_object.ItemsLength()):
+    item = section_object.Items(j)
+    if item is None:
+      continue
+    key_bytes = item.Key()
+    key = key_bytes.decode("utf-8") if key_bytes is not None else None
+    if key == "model_type":
+      value_type = item.ValueType()
+      union_table = item.Value()
+      if not (
+          union_table
+          and union_table.Bytes
+          and union_table.Pos
+          and value_type == schema.VData.StringValue
+      ):
+        continue
+      value_obj = schema.StringValue()
+      value_obj.Init(union_table.Bytes, union_table.Pos)
+      value_bytes = value_obj.Value()
+      model_type = value_bytes.decode("utf-8") if value_bytes else None
+      break
+  file_name = f"Section{section_index}_TFLiteModel"
+  if model_type:
+    file_name += f"_{model_type}"
+  return f"{file_name}.tflite"
+
+
+def _dump_llm_metadata_proto(
+    file_stream: IO[bytes],
+    section_object: schema.SectionObject,
+    dump_files_dir: str | None,
+    output_stream: IO[str],
+) -> None:
+  """Dumps LlmMetadataProto section content."""
+  file_stream.seek(section_object.BeginOffset())
+  proto_data = file_stream.read(
+      section_object.EndOffset() - section_object.BeginOffset()
+  )
+  llm_metadata = llm_metadata_pb2.LlmMetadata()
+  llm_metadata.ParseFromString(proto_data)
+  output_stream.write(f"{' ' * INDENT_SPACES}<<<<<<<< start of LlmMetadata\n")
+  debug_str = text_format.MessageToString(llm_metadata)
+  for line in debug_str.splitlines():
+    output_stream.write(f"{' ' * (INDENT_SPACES * 2)}{line}\n")
+  output_stream.write(f"{' ' * INDENT_SPACES}>>>>>>>> end of LlmMetadata\n")
+
+  if dump_files_dir:
+    file_path = os.path.join(dump_files_dir, "LlmMetadataProto.pbtext")
+    with open(file_path, "w") as f_out:
+      f_out.write(debug_str)
+    output_stream.write(
+        f"{' ' * INDENT_SPACES}LlmMetadataProto dumped to: {file_path}\n"
+    )
+
+
+def _dump_tflite_model(
+    file_stream: IO[bytes],
+    section_object: schema.SectionObject,
+    section_index: int,
+    dump_files_dir: Optional[str],
+    output_stream: IO[str],
+) -> None:
+  """Dumps TFLiteModel section content."""
+  if dump_files_dir:
+    file_name = _get_tflite_model_filename(section_object, section_index)
+    file_path = os.path.join(dump_files_dir, file_name)
+    file_stream.seek(section_object.BeginOffset())
+    with open(file_path, "wb") as f_out:
+      f_out.write(
+          file_stream.read(
+              section_object.EndOffset() - section_object.BeginOffset()
+          )
+      )
+    output_stream.write(
+        f"{' ' * INDENT_SPACES}{file_name} dumped to: {file_path}\n"
+    )
+
+
+def _get_generic_section_file_extension(data_type_str: str) -> str:
+  """Returns the file extension for a generic section based on its data type."""
+  if data_type_str == "SP_Tokenizer":
+    return ".spiece"
+  elif data_type_str == "HF_Tokenizer_Zlib":
+    return ".json"
+  else:
+    return ".bin"
+
+
+def _dump_generic_section(
+    file_stream: IO[bytes],
+    section_object: schema.SectionObject,
+    section_index: int,
+    dump_files_dir: Optional[str],
+    output_stream: IO[str],
+) -> None:
+  """Dumps generic section content."""
+  if dump_files_dir:
+    data_type_str = litertlm_core.any_section_data_type_to_string(
+        section_object.DataType()
+    )
+    file_extension = _get_generic_section_file_extension(data_type_str)
+    file_name = f"Section{section_index}_{data_type_str}{file_extension}"
+    file_path = os.path.join(dump_files_dir, file_name)
+    file_stream.seek(section_object.BeginOffset())
+    with open(file_path, "wb") as f_out:
+      f_out.write(
+          file_stream.read(
+              section_object.EndOffset() - section_object.BeginOffset()
+          )
+      )
+    output_stream.write(
+        f"{' ' * INDENT_SPACES}Section{section_index}_{data_type_str} dumped"
+        f" to: {file_path}\n"
+    )
+
+
+def peek_litertlm_file(
+    litertlm_path: str, dump_files_dir: Optional[str], output_stream: IO[str]
+) -> None:
+  """Reads and prints information from a LiteRT-LM file.
+
+  Args:
+    litertlm_path: The path to the LiteRT-LM file.
+    dump_files_dir: Optional directory to dump section contents.
+    output_stream: The stream to write the output to.
+  """
   metadata = read_litertlm_header(litertlm_path, output_stream)
-  with open(litertlm_path, "rb") as f:
+  with open(litertlm_path, "rb") as file_stream:
 
     # Print System Metadata
     system_metadata = metadata.SystemMetadata()
@@ -153,6 +315,9 @@ def peek_litertlm_file(litertlm_path, output_stream):
     num_sections = section_metadata.ObjectsLength() if section_metadata else 0
     print_boxed_title(output_stream, f"Sections ({num_sections})")
 
+    if dump_files_dir:
+      os.makedirs(dump_files_dir, exist_ok=True)
+
     if num_sections == 0 or section_metadata is None:
       output_stream.write(" " * INDENT_SPACES + "<None>\n")
     else:
@@ -160,43 +325,44 @@ def peek_litertlm_file(litertlm_path, output_stream):
       bold = ANSI_BOLD if use_color else ""
       reset = ANSI_RESET if use_color else ""
       for i in range(num_sections):
-        sec_obj = section_metadata.Objects(i)
+        section_object = section_metadata.Objects(i)
         output_stream.write(f"\n{bold}Section {i}:{reset}\n")
         output_stream.write(" " * INDENT_SPACES + "Items:\n")
-        if sec_obj is None:
+        if section_object is None:
           output_stream.write(" " * INDENT_SPACES + "<None>\n")
           continue
 
         # Print the items in the section.
-        if sec_obj.ItemsLength() > 0:
-          for j in range(sec_obj.ItemsLength()):
-            print_key_value_pair(sec_obj.Items(j), output_stream, 2)
+        if section_object.ItemsLength() > 0:
+          for j in range(section_object.ItemsLength()):
+            print_key_value_pair(section_object.Items(j), output_stream, 2)
         else:
           output_stream.write(" " * (2 * INDENT_SPACES) + "<None>\n")
 
         output_stream.write(
-            f"{' ' * INDENT_SPACES}Begin Offset: {sec_obj.BeginOffset()}\n"
+            f"{' ' * INDENT_SPACES}Begin Offset:"
+            f" {section_object.BeginOffset()}\n"
         )
         output_stream.write(
-            f"{' ' * INDENT_SPACES}End Offset:   {sec_obj.EndOffset()}\n"
+            f"{' ' * INDENT_SPACES}End Offset:   {section_object.EndOffset()}\n"
         )
         output_stream.write(
             f"{' ' * INDENT_SPACES}Data Type:    "
-            f"{litertlm_core.any_section_data_type_to_string(sec_obj.DataType())}\n"
+            f"{litertlm_core.any_section_data_type_to_string(section_object.DataType())}\n"
         )
 
-        if sec_obj.DataType() == schema.AnySectionDataType.LlmMetadataProto:
-          f.seek(sec_obj.BeginOffset())
-          proto_data = f.read(sec_obj.EndOffset() - sec_obj.BeginOffset())
-          llm_metadata = llm_metadata_pb2.LlmMetadata()
-          llm_metadata.ParseFromString(proto_data)
-          output_stream.write(
-              f"{' ' * INDENT_SPACES}<<<<<<<< start of LlmMetadata\n"
+        data_type = section_object.DataType()
+        if data_type == schema.AnySectionDataType.LlmMetadataProto:
+          _dump_llm_metadata_proto(
+              file_stream, section_object, dump_files_dir, output_stream
           )
-          debug_str = text_format.MessageToString(llm_metadata)
-          for line in debug_str.splitlines():
-            output_stream.write(f"{' ' * (INDENT_SPACES * 2)}{line}\n")
-          output_stream.write(
-              f"{' ' * INDENT_SPACES}>>>>>>>> end of LlmMetadata\n"
+        elif data_type == schema.AnySectionDataType.TFLiteModel:
+          _dump_tflite_model(
+              file_stream, section_object, i, dump_files_dir, output_stream
           )
+        else:
+          _dump_generic_section(
+              file_stream, section_object, i, dump_files_dir, output_stream
+          )
+
         output_stream.write("\n")
