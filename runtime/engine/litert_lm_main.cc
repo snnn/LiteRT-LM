@@ -74,6 +74,9 @@ ABSL_FLAG(bool, force_f32, false,
           "Force float 32 precision for the activation data type.");
 ABSL_FLAG(bool, multi_turns, false,
           "If true, the command line will ask for multi-turns input.");
+ABSL_FLAG(int, num_cpu_threads, 0,
+          "If greater than 0, the number of CPU threads to use for the LLM "
+          "execution with CPU backend.");
 
 namespace {
 
@@ -225,6 +228,14 @@ absl::Status MainHelper(int argc, char** argv) {
   if (absl::GetFlag(FLAGS_force_f32)) {
     engine_settings.GetMutableMainExecutorSettings().SetActivationDataType(
         litert::lm::ActivationDataType::FLOAT32);
+  }
+  if (backend == Backend::CPU && absl::GetFlag(FLAGS_num_cpu_threads) > 0) {
+    auto& executor_settings = engine_settings.GetMutableMainExecutorSettings();
+    ASSIGN_OR_RETURN(
+        auto cpu_settings,
+        executor_settings.MutableBackendConfig<litert::lm::CpuConfig>());
+    cpu_settings.number_of_threads = absl::GetFlag(FLAGS_num_cpu_threads);
+    executor_settings.SetBackendConfig(cpu_settings);
   }
   auto session_config = litert::lm::SessionConfig::CreateDefault();
   auto sampler_backend_str = absl::GetFlag(FLAGS_sampler_backend);
