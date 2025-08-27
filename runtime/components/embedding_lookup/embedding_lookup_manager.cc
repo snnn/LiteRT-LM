@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -28,21 +30,21 @@ EmbeddingLookupManager::Create(
     const litert::Model* absl_nonnull text_embedding_model,
     absl::flat_hash_map<int, litert::Model*>&
         end_of_multi_modal_embedding_models,
-    bool fully_supports_multi_modal) {
+    bool fully_supports_multi_modal, std::optional<std::string> signature_key) {
   auto embedding_lookup_manager = std::make_unique<EmbeddingLookupManager>();
   RETURN_IF_ERROR(embedding_lookup_manager->Initialize(
       text_embedding_model, end_of_multi_modal_embedding_models,
-      fully_supports_multi_modal));
+      fully_supports_multi_modal, signature_key));
   return std::move(embedding_lookup_manager);
 }
 
 absl::StatusOr<std::unique_ptr<EmbeddingLookupManager>>
 EmbeddingLookupManager::Create(
     const litert::Model* absl_nonnull text_embedding_model,
-    bool fully_supports_multi_modal) {
+    bool fully_supports_multi_modal, std::optional<std::string> signature_key) {
   absl::flat_hash_map<int, litert::Model*> end_of_multi_modal_embedding_models;
   return Create(text_embedding_model, end_of_multi_modal_embedding_models,
-                fully_supports_multi_modal);
+                fully_supports_multi_modal, signature_key);
 }
 
 absl::Status EmbeddingLookupManager::UpdateMultiModalEmbeddings(
@@ -202,7 +204,7 @@ absl::Status EmbeddingLookupManager::Initialize(
     const litert::Model* absl_nonnull text_embedding_model,
     absl::flat_hash_map<int, litert::Model*>&
         end_of_multi_modal_embedding_models,
-    bool fully_supports_multi_modal) {
+    bool fully_supports_multi_modal, std::optional<std::string> signature_key) {
   if (!fully_supports_multi_modal &&
       !end_of_multi_modal_embedding_models.empty()) {
     return absl::InvalidArgumentError(
@@ -210,9 +212,9 @@ absl::Status EmbeddingLookupManager::Initialize(
         "end_of_multi_modal_embedding_models must be empty.");
   }
   fully_supports_multi_modal_ = fully_supports_multi_modal;
-  ASSIGN_OR_RETURN(
-      text_embedding_lookup_,
-      EmbeddingLookupText::Create(std::move(text_embedding_model)));
+  ASSIGN_OR_RETURN(text_embedding_lookup_,
+                   EmbeddingLookupText::Create(std::move(text_embedding_model),
+                                               signature_key));
   default_embedding_vector_ =
       text_embedding_lookup_->GetDefaultEmbeddingVector();
   for (const auto& [special_token, embedding_model] :

@@ -4,10 +4,14 @@
 
 #include <cstdint>
 #include <cstring>
+#include <iostream>
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/base/nullability.h"  // from @com_google_absl
 #include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/statusor.h"  // from @com_google_absl
 #include "absl/strings/str_cat.h"  // from @com_google_absl
@@ -43,7 +47,7 @@ absl::Status EmbeddingLookupText::LookupInternal(int token,
   // The input tensor size was verified when the model was loaded.
   input_buffers_[0].Write(absl::MakeSpan(const_cast<const int*>(&token), 1));
 
-  compiled_model_->Run(input_buffers_, output_buffers_);
+  compiled_model_->Run(signature_key_.value(), input_buffers_, output_buffers_);
 
   LITERT_ASSIGN_OR_RETURN(auto output_buffer_size, output_buffers_[0].Size());
 
@@ -204,9 +208,9 @@ absl::Status EmbeddingLookupText::LookupPrefill(absl::Span<const int> tokens,
 
   prefill_output_ptr += byte_offset;
   for (int token : tokens) {
-      absl::Span<uint8_t> output_buffer(
-          reinterpret_cast<uint8_t*>(prefill_output_ptr), bytes_per_token);
-      RETURN_IF_ERROR(LookupInternal(token, output_buffer));
+    absl::Span<uint8_t> output_buffer(
+        reinterpret_cast<uint8_t*>(prefill_output_ptr), bytes_per_token);
+    RETURN_IF_ERROR(LookupInternal(token, output_buffer));
     prefill_output_ptr += bytes_per_token;
   }
 
@@ -224,10 +228,11 @@ absl::Status EmbeddingLookupText::LookupPrefill(absl::Span<const int> tokens,
 }
 
 absl::StatusOr<std::unique_ptr<EmbeddingLookupText>>
-EmbeddingLookupText::Create(const litert::Model* model) {
+EmbeddingLookupText::Create(const litert::Model* absl_nonnull model,
+                            std::optional<std::string> signature_key) {
   LITERT_ASSIGN_OR_RETURN(auto env, ::litert::Environment::Create({}));
   auto handler = std::unique_ptr<EmbeddingLookupText>(
-      new EmbeddingLookupText(std::move(env), model));
+      new EmbeddingLookupText(std::move(env), model, signature_key));
   RETURN_IF_ERROR(handler->Initialize());
   return handler;
 }
@@ -240,14 +245,33 @@ absl::Status EmbeddingLookupText::Initialize() {
                           litert::CompiledModel::Create(env_, model_, options));
   LITERT_ASSIGN_OR_RETURN(auto signatures, model_.GetSignatures());
 
-  if (signatures.size() != 1) {
-    return absl::InvalidArgumentError(absl::StrCat(
-        "The Embedding model must have exactly one signature but got ",
-        signatures.size()));
+  if (signature_key_.has_value()) {
+    bool found = false;
+    for (const litert::Signature& signature : signatures) {
+      if (signature.Key() == signature_key_.value()) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("The provided signature key '", signature_key_.value(),
+                       "' was not found in the model's signatures."));
+    }
+  } else {
+    if (signatures.size() != 1) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("No signature key was provided. The Embedding model "
+                       "must have exactly one signature but got ",
+                       signatures.size()));
+    }
+    signature_key_ = signatures.front().Key();
   }
 
+  std::cout << "\n\n\t\tsignature_key: " << signature_key_.value() << "\n\n";
+
   LITERT_ASSIGN_OR_RETURN(input_buffers_, compiled_model_->CreateInputBuffers(
-                                              /*signature_index=*/0));
+                                              signature_key_.value()));
 
   LITERT_ASSIGN_OR_RETURN(auto input_buffer_size, input_buffers_[0].Size());
 
@@ -263,7 +287,7 @@ absl::Status EmbeddingLookupText::Initialize() {
   }
 
   LITERT_ASSIGN_OR_RETURN(output_buffers_, compiled_model_->CreateOutputBuffers(
-                                               /*signature_index=*/0));
+                                               signature_key_.value()));
   LITERT_ASSIGN_OR_RETURN(output_buffer_type_, output_buffers_[0].TensorType());
   const auto& output_buffer_layout = output_buffer_type_.value().Layout();
 

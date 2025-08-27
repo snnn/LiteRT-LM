@@ -3,6 +3,8 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 #include "absl/base/nullability.h"  // from @com_google_absl
@@ -32,15 +34,20 @@ class EmbeddingLookupManager {
   // default any multi-modal tokens to the text embedding value of entry 0.
   // If fully_supports_multi_modal is false, the
   // end_of_multi_modal_embedding_models must be empty.
+  //
+  // If the provide text_embedding_model has more than one signature, the
+  // signature_key must be provided.
   static absl::StatusOr<std::unique_ptr<EmbeddingLookupManager>> Create(
       const litert::Model* absl_nonnull text_embedding_model,
       absl::flat_hash_map<int, litert::Model*>&
           end_of_multi_modal_embedding_models,
-      bool fully_supports_multi_modal = true);
+      bool fully_supports_multi_modal = true,
+      std::optional<std::string> signature_key = std::nullopt);
 
   static absl::StatusOr<std::unique_ptr<EmbeddingLookupManager>> Create(
       const litert::Model* absl_nonnull text_embedding_model,
-      bool fully_supports_multi_modal = true);
+      bool fully_supports_multi_modal = true,
+      std::optional<std::string> signature_key = std::nullopt);
 
   // Updates the multimodal embeddings for the given ExecutorInputs.
   // Intended to be called at the beginning of the prefill pass.
@@ -93,7 +100,8 @@ class EmbeddingLookupManager {
       const litert::Model* absl_nonnull text_embedding_model,
       absl::flat_hash_map<int, litert::Model*>&
           end_of_multi_modal_embedding_models,
-      bool fully_supports_multi_modal);
+      bool fully_supports_multi_modal,
+      std::optional<std::string> signature_key);
 
   std::unique_ptr<EmbeddingLookupText> text_embedding_lookup_;
   std::vector<std::unique_ptr<EmbeddingLookupMultiModal>>

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -35,9 +36,11 @@ class EmbeddingLookupText : public EmbeddingLookup {
 
   // Creates a EmbeddingLookupText instance. The reference of |model| is kept
   // in the returned instance, so the caller must ensure that |model| outlives
-  // the returned instance.
+  // the returned instance.  If the model has more than one signature, the
+  // signature_key must be provided.
   static absl::StatusOr<std::unique_ptr<EmbeddingLookupText>> Create(
-      const litert::Model* absl_nonnull model);
+      const litert::Model* absl_nonnull model,
+      std::optional<std::string> signature_key = std::nullopt);
 
   // For a given token, looks up the embedding and stores it in the
   // provided vector. The caller is responsible for ensuring that the vector is
@@ -92,8 +95,9 @@ class EmbeddingLookupText : public EmbeddingLookup {
 
  protected:
   EmbeddingLookupText(litert::Environment env,
-                      const litert::Model* absl_nonnull model)
-      : env_(std::move(env)), model_(*model) {}
+                      const litert::Model* absl_nonnull model,
+                      std::optional<std::string> signature_key)
+      : env_(std::move(env)), model_(*model), signature_key_(signature_key) {}
 
   // Loads the provided model. This must be called before Lookup.
   absl::Status Initialize();
@@ -124,6 +128,10 @@ class EmbeddingLookupText : public EmbeddingLookup {
   // The default embedding vector to use when a token is not found in the
   // lookup table. This is set to the value of token id 0.
   std::vector<float> default_embedding_vector_;
+
+  // The signature key to use for the embedding model. If not provided, the
+  // first signature key will be used.
+  std::optional<std::string> signature_key_;
 };
 
 }  // namespace litert::lm

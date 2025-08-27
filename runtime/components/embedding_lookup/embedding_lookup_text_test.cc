@@ -52,14 +52,15 @@ class EmbeddingLookupTextTest : public testing::Test {
     return absl::OkStatus();
   }
 
-  std::unique_ptr<EmbeddingLookupText> GetEmbeddingLookupText() {
+  std::unique_ptr<EmbeddingLookupText> GetEmbeddingLookupText(
+      std::optional<std::string> signature_key = std::nullopt) {
     if (!CreateModelFromFile().ok()) {
       return nullptr;
     }
     if (!model_.has_value()) {
       return nullptr;
     }
-    auto status = EmbeddingLookupText::Create(&*model_);
+    auto status = EmbeddingLookupText::Create(&*model_, signature_key);
     if (!status.ok()) {
       return nullptr;
     }
@@ -679,6 +680,35 @@ TEST_F(EmbeddingLookupTextTest, LookupPrefillWithBadOffset) {
           testing::HasSubstr(
               "The byte offset and the total number of bytes to be written "
               "must not exceed the size of the output tensor")));
+}
+
+TEST_F(EmbeddingLookupTextTest, LookupDecodeVectorSpecifySignatureKey) {
+  std::unique_ptr<EmbeddingLookupText> embedding =
+      GetEmbeddingLookupText("serving_default");
+  EXPECT_NE(embedding, nullptr);
+
+  std::vector<float> output_vector(4 * 32);
+
+  int32_t token = 1;
+  EXPECT_OK(embedding->LookupDecode(token, output_vector));
+
+  size_t offset = 0;
+  // Dimensions 0 and 1 both have size 1.
+  for (int idx2 = 0; idx2 < 4; ++idx2) {
+    for (int idx3 = 0; idx3 < 32; ++idx3) {
+      // Dimensions 0 and 1 both have size 1 so offset and expected value can
+      // ignore them.
+      float expected_value = 10000.0 * token + 100.0 * idx2 + idx3;
+      EXPECT_NEAR(output_vector[offset++], expected_value, 1e-5);
+    }
+  }
+}
+
+TEST_F(EmbeddingLookupTextTest, LookupDecodeVectorSpecifySignatureKeyNotFound) {
+  EXPECT_TRUE(CreateModelFromFile().ok());
+  EXPECT_TRUE(model_.has_value());
+  auto status = EmbeddingLookupText::Create(&*model_, "not_found");
+  EXPECT_TRUE(!status.ok());
 }
 
 }  // namespace litert::lm

@@ -1378,6 +1378,47 @@ TEST_F(EmbeddingLookupManagerTest,
   ASSERT_OK(embedding_lookup_manager_->CleanupMultiModalEmbeddings());
 }
 
+TEST_F(EmbeddingLookupManagerTest, LookupPrefillTokenSpecifySignatureKey) {
+  auto status = EmbeddingLookupManager::Create(
+      &text_embedding_model_, /*fully_supports_multi_modal=*/false,
+      "serving_default");
+  ASSERT_OK(status);
+  embedding_lookup_manager_ = std::move(status.value());
+  ASSERT_NE(embedding_lookup_manager_, nullptr);
+
+  ExecutorInputs inputs(std::nullopt, std::nullopt, std::nullopt);
+  ASSERT_OK(embedding_lookup_manager_->UpdateMultiModalEmbeddings(inputs));
+
+  std::vector<float> output_vector;
+
+  {
+    int token = -1;
+    ASSERT_OK(embedding_lookup_manager_->LookupPrefill(token, output_vector));
+
+    for (int idx2 = 0; idx2 < 4; ++idx2) {
+      for (int idx3 = 0; idx3 < 32; ++idx3) {
+        float expected_value = 100.0 * idx2 + idx3;
+        size_t offset = idx2 * 32 + idx3;
+        ASSERT_NEAR(output_vector[offset], expected_value, 1e-5);
+      }
+    }
+  }
+  {
+    int token = -2;
+    ASSERT_OK(embedding_lookup_manager_->LookupPrefill(token, output_vector));
+
+    for (int idx2 = 0; idx2 < 4; ++idx2) {
+      for (int idx3 = 0; idx3 < 32; ++idx3) {
+        float expected_value = 100.0 * idx2 + idx3;
+        size_t offset = idx2 * 32 + idx3;
+        ASSERT_NEAR(output_vector[offset], expected_value, 1e-5);
+      }
+    }
+  }
+
+  ASSERT_OK(embedding_lookup_manager_->CleanupMultiModalEmbeddings());
+}
+
 TEST_F(EmbeddingLookupManagerTest,
        LookupPrefillPartialMultiModalSupportWithEmbeddings) {
   auto status = EmbeddingLookupManager::Create(
