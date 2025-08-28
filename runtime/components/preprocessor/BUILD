@@ -28,8 +28,37 @@ cc_library(
     name = "audio_preprocessor",
     hdrs = ["audio_preprocessor.h"],
     deps = [
+        "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@litert//litert/cc:litert_layout",
+        "@litert//litert/cc:litert_macros",
         "//runtime/engine:io_types",
+        "//runtime/util:litert_status_util",
+    ] + select({
+        "@litert//litert:litert_link_capi_so": [
+            "@litert//litert/cc:litert_tensor_buffer",
+        ],
+        "//conditions:default": [
+            "@litert//litert/cc/internal:litert_tensor_buffer",
+        ],
+    }),
+)
+
+cc_test(
+    name = "audio_preprocessor_test",
+    srcs = ["audio_preprocessor_test.cc"],
+    deps = [
+        ":audio_preprocessor",
+        "@com_google_googletest//:gtest_main",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@litert//litert/cc:litert_layout",
+        "@litert//litert/cc:litert_tensor_buffer",
+        "@litert//litert/test:matchers",
+        "//runtime/engine:io_types",
+        "//runtime/util:convert_tensor_buffer",
+        "//runtime/util:test_utils",
     ],
 )
 
@@ -148,6 +177,121 @@ cc_test(
     deps = [
         ":signal_vector_util",
         "@com_google_googletest//:gtest_main",
+        "//runtime/util:test_utils",
+    ],
+)
+
+cc_library(
+    name = "image_preprocessor",
+    hdrs = ["image_preprocessor.h"],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@litert//litert/cc:litert_layout",
+        "@litert//litert/cc:litert_macros",
+        "//runtime/engine:io_types",
+        "//runtime/util:litert_status_util",
+    ] + select({
+        "@litert//litert:litert_link_capi_so": [
+            "@litert//litert/cc:litert_tensor_buffer",
+        ],
+        "//conditions:default": [
+            "@litert//litert/cc/internal:litert_tensor_buffer",
+        ],
+    }),
+)
+
+cc_test(
+    name = "image_preprocessor_test",
+    srcs = ["image_preprocessor_test.cc"],
+    deps = [
+        ":image_preprocessor",
+        "@com_google_googletest//:gtest_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@litert//litert/cc:litert_layout",
+        "@litert//litert/cc:litert_tensor_buffer",
+        "@litert//litert/test:matchers",
+        "//runtime/engine:io_types",
+        "//runtime/util:convert_tensor_buffer",
+        "//runtime/util:test_utils",
+    ],
+)
+
+cc_library(
+    name = "by_pass_audio_preprocessor",
+    hdrs = ["by_pass_audio_preprocessor.h"],
+    deps = [
+        ":audio_preprocessor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@litert//litert/cc:litert_macros",
+        "//runtime/engine:io_types",
+        "//runtime/util:litert_status_util",
+    ] + select({
+        "@litert//litert:litert_link_capi_so": [
+            "@litert//litert/cc:litert_tensor_buffer",
+        ],
+        "//conditions:default": [
+            "@litert//litert/cc/internal:litert_tensor_buffer",
+        ],
+    }),
+)
+
+cc_test(
+    name = "by_pass_audio_preprocessor_test",
+    srcs = ["by_pass_audio_preprocessor_test.cc"],
+    deps = [
+        ":by_pass_audio_preprocessor",
+        "@com_google_googletest//:gtest_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@litert//litert/cc:litert_layout",
+        "@litert//litert/cc:litert_tensor_buffer",
+        "@litert//litert/test:matchers",
+        "//runtime/engine:io_types",
+        "//runtime/util:convert_tensor_buffer",
+        "//runtime/util:test_utils",
+    ],
+)
+
+cc_library(
+    name = "by_pass_image_preprocessor",
+    hdrs = ["by_pass_image_preprocessor.h"],
+    deps = [
+        ":image_preprocessor",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@litert//litert/cc:litert_macros",
+        "//runtime/engine:io_types",
+        "//runtime/util:litert_status_util",
+    ] + select({
+        "@litert//litert:litert_link_capi_so": [
+            "@litert//litert/cc:litert_tensor_buffer",
+        ],
+        "//conditions:default": [
+            "@litert//litert/cc/internal:litert_tensor_buffer",
+        ],
+    }),
+)
+
+cc_test(
+    name = "by_pass_image_preprocessor_test",
+    srcs = ["by_pass_image_preprocessor_test.cc"],
+    deps = [
+        ":by_pass_image_preprocessor",
+        "@com_google_googletest//:gtest_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
+        "@litert//litert/cc:litert_layout",
+        "@litert//litert/cc:litert_tensor_buffer",
+        "@litert//litert/test:matchers",
+        "//runtime/engine:io_types",
+        "//runtime/util:convert_tensor_buffer",
         "//runtime/util:test_utils",
     ],
 )

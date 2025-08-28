@@ -56,12 +56,14 @@ class AudioPreprocessorMiniAudio : public AudioPreprocessor {
   // Preprocesses the undecoded raw audio bytes and returns the preprocessed
   // audio mel spectrograms.
   // Args:
-  //   - audio_bytes: The raw audio bytes to preprocess. The supported audio
+  //   - input_audio: The input audio to preprocess. The supported audio
   //     format from MiniAudio library is WAV, FLAC and MP3.
+  //     If the input audio is already preprocessed, it will be returned
+  //     directly.
   // Returns:
   //   An InputAudio object containing the preprocessed audio mel spectrograms
   //   with shape (1, num_frames, num_mel_bins).
-  absl::StatusOr<InputAudio> Preprocess(InputAudio audio_bytes) override;
+  absl::StatusOr<InputAudio> Preprocess(const InputAudio& input_audio) override;
 
  private:
   explicit AudioPreprocessorMiniAudio(

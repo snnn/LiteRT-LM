@@ -20,6 +20,7 @@
 
 #include "absl/status/statusor.h"  // from @com_google_absl
 #include "runtime/engine/io_types.h"
+#include "runtime/util/status_macros.h"  // IWYU pragma: keep
 
 namespace litert::lm {
 
@@ -254,7 +255,8 @@ class AudioPreprocessor {
   virtual ~AudioPreprocessor() = default;
 
   // Preprocesses the undecoded audio bytes and returns the preprocessed audio.
-  virtual absl::StatusOr<InputAudio> Preprocess(InputAudio audio_bytes) = 0;
+  virtual absl::StatusOr<InputAudio> Preprocess(
+      const InputAudio& input_audio) = 0;
 };
 
 }  // namespace litert::lm

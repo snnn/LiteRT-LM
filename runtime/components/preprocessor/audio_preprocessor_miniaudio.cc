@@ -234,12 +234,17 @@ AudioPreprocessorMiniAudio::Create(const AudioPreprocessorConfig& config) {
 // 3. Convert spectrograms to log mel spectrograms. (Mel filterbank)
 // 4. Create a tensor buffer for the log mel spectrograms.
 absl::StatusOr<InputAudio> AudioPreprocessorMiniAudio::Preprocess(
-    InputAudio audio_bytes) {
-  if (audio_bytes.IsTensorBuffer()) {
-    return absl::FailedPreconditionError(
-        "Audio is already preprocessed. No need to preprocess again.");
+    const InputAudio& input_audio) {
+  if (input_audio.IsTensorBuffer()) {
+    ASSIGN_OR_RETURN(auto processed_audio_tensor,
+                     input_audio.GetPreprocessedAudioTensor());
+    LITERT_ASSIGN_OR_RETURN(auto processed_audio_tensor_with_reference,
+                            processed_audio_tensor->Duplicate());
+    InputAudio processed_audio(
+        std::move(processed_audio_tensor_with_reference));
+    return processed_audio;
   }
-  ASSIGN_OR_RETURN(auto raw_audio_bytes, audio_bytes.GetRawAudioBytes());
+  ASSIGN_OR_RETURN(auto raw_audio_bytes, input_audio.GetRawAudioBytes());
   std::vector<float> pcm_frames;
   RETURN_IF_ERROR(DecodeAudio(raw_audio_bytes, config_.GetNumChannels(),
                               config_.GetSampleRateHz(), pcm_frames));
