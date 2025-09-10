@@ -30,6 +30,7 @@
 #include "absl/strings/match.h"  // from @com_google_absl
 #include "absl/strings/string_view.h"  // from @com_google_absl
 #include "litert/cc/litert_buffer_ref.h"  // from @litert
+#include "litert/cc/litert_element_type.h"  // from @litert
 #include "litert/cc/litert_expected.h"  // from @litert
 #include "litert/cc/litert_model.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer.h"  // from @litert
@@ -61,8 +62,6 @@ constexpr char kGemma2JAX_InputTokens[] = "token_ids";
 constexpr char kGemma2JAX_InputPositions[] = "positions";
 // Input: [batch_size, max_seq_len, 1, context_size]
 constexpr char kGemma2JAX_InputAttnMask[] = "attn_mask";
-constexpr AttentionMaskDataType kGemma2JAX_InputAttnMaskDataType =
-    AttentionMaskDataType::BOOLEAN;
 // Output: [batch_size, max_seq_len, vocab_size]
 constexpr char kGemma2JAX_OutputLogits[] = "logits";
 
@@ -74,8 +73,6 @@ constexpr char kPyTorch_InputTokens[] = "tokens";
 constexpr char kPyTorch_InputPositions[] = "input_pos";
 // Input: [batch_size, 1, max_seq_len, context_size]
 constexpr char kPyTorch_InputAttnMask[] = "mask";
-constexpr AttentionMaskDataType kPyTorch_InputAttnMaskDataType =
-    AttentionMaskDataType::FLOAT;
 // Output: [batch_size, max_seq_len, vocab_size]
 constexpr char kPyTorch_OutputLogits[] = "logits";
 
@@ -85,8 +82,6 @@ constexpr char kPyTorch_OutputLogits[] = "logits";
 constexpr char kPyTorchCpuOnly_InputTokens[] = "tokens";
 // Input: [max_seq_len]
 constexpr char kPyTorchCpuOnly_InputPositions[] = "input_pos";
-constexpr AttentionMaskDataType kPyTorchCpuOnly_InputAttnMaskDataType =
-    AttentionMaskDataType::FLOAT;
 // Output: [batch_size, max_seq_len, vocab_size]
 constexpr char kPyTorchCpuOnly_OutputLogits[] = "logits";
 
@@ -95,8 +90,6 @@ constexpr char kPyTorchCpuOnly_OutputLogits[] = "logits";
 constexpr char kExternalEmbeddingsModel_InputPositions[] = "input_pos";
 // Input: [batch_size, 1, max_seq_len, context_size]
 constexpr char kExternalEmbeddingsModel_InputAttnMask[] = "mask";
-constexpr AttentionMaskDataType kExternalEmbeddingsModel_InputAttnMaskDataType =
-    AttentionMaskDataType::FLOAT;
 // Input: [batch_size, max_seq_len, embedding_dim]
 constexpr char kExternalEmbeddingsModel_Embeddings[] = "embeddings";
 // Input: [batch_size, max_seq_len, num_layers,embedding_dim]
@@ -112,8 +105,6 @@ constexpr char kGemini_InputTokens[] = "token_ids";
 constexpr char kGemini_InputPositions[] = "positions";
 // Input: [batch_size, max_seq_len, 1, context_size]
 constexpr char kGemini_InputAttnMask[] = "attn_mask";
-constexpr AttentionMaskDataType kGemini_InputAttnMaskDataType =
-    AttentionMaskDataType::FLOAT;
 // Output: [batch_size, max_seq_len, vocab_size]
 constexpr char kGemini_OutputLogits[] = "logits";
 
@@ -202,7 +193,6 @@ absl::StatusOr<ModelSignatures> GetModelSignaturesFromInputOutputNames(
         .input_tokens = kGemma2JAX_InputTokens,
         .input_positions = kGemma2JAX_InputPositions,
         .input_attn_mask = kGemma2JAX_InputAttnMask,
-        .input_attn_mask_data_type = kGemma2JAX_InputAttnMaskDataType,
         .output_logits = kGemma2JAX_OutputLogits,
     };
   }
@@ -212,7 +202,6 @@ absl::StatusOr<ModelSignatures> GetModelSignaturesFromInputOutputNames(
         .input_tokens = kPyTorch_InputTokens,
         .input_positions = kPyTorch_InputPositions,
         .input_attn_mask = kPyTorch_InputAttnMask,
-        .input_attn_mask_data_type = kPyTorch_InputAttnMaskDataType,
         .output_logits = kPyTorch_OutputLogits,
     };
   }
@@ -221,7 +210,6 @@ absl::StatusOr<ModelSignatures> GetModelSignaturesFromInputOutputNames(
     return ModelSignatures{
         .input_tokens = kPyTorch_InputTokens,
         .input_positions = kPyTorch_InputPositions,
-        .input_attn_mask_data_type = kPyTorchCpuOnly_InputAttnMaskDataType,
         .output_logits = kPyTorchCpuOnly_OutputLogits,
     };
   }
@@ -231,7 +219,6 @@ absl::StatusOr<ModelSignatures> GetModelSignaturesFromInputOutputNames(
         .input_tokens = kGemini_InputTokens,
         .input_positions = kGemini_InputPositions,
         .input_attn_mask = kGemini_InputAttnMask,
-        .input_attn_mask_data_type = kGemini_InputAttnMaskDataType,
         .output_logits = kGemini_OutputLogits,
     };
   }
@@ -240,8 +227,6 @@ absl::StatusOr<ModelSignatures> GetModelSignaturesFromInputOutputNames(
     return ModelSignatures{
         .input_positions = kExternalEmbeddingsModel_InputPositions,
         .input_attn_mask = kExternalEmbeddingsModel_InputAttnMask,
-        .input_attn_mask_data_type =
-            kExternalEmbeddingsModel_InputAttnMaskDataType,
         .input_embeddings = kExternalEmbeddingsModel_Embeddings,
         .input_per_layer_embeddings =
             kExternalEmbeddingsModel_PerLayerEmbeddings,
@@ -323,20 +308,21 @@ GetOptimizedPrefillWorkGroups(
 }
 
 absl::Status InitializeAttentionMask(litert::TensorBuffer& mask,
-                                     AttentionMaskDataType mask_data_type,
                                      bool is_f16) {
   auto mask_size = mask.PackedSize();
   RET_CHECK(mask_size) << "Failed to get attention mask buffer size.";
+  auto mask_tensor_type = mask.TensorType();
+  RET_CHECK(mask_tensor_type) << "Failed to get attention mask tensor type.";
   auto mask_lock_and_addr = litert::TensorBufferScopedLock::Create(
       mask, litert::TensorBuffer::LockMode::kWrite);
   RET_CHECK(mask_lock_and_addr) << "Failed to lock attention mask buffer.";
 
-  switch (mask_data_type) {
-    case AttentionMaskDataType::BOOLEAN: {
+  switch (mask_tensor_type->ElementType()) {
+    case litert::ElementType::Bool: {
       // Boolean mask: Default value = false.
       memset(mask_lock_and_addr->second, 0, *mask_size);
     } break;
-    case AttentionMaskDataType::FLOAT: {
+    case litert::ElementType::Float32: {
       // Float mask: Default value is based on precision.
       // Default value reference:
       // third_party/odml/infra/genai/inference/ml_drift/llm/tasks/apply_attention_mask_test_util.cc
@@ -352,8 +338,7 @@ absl::Status InitializeAttentionMask(litert::TensorBuffer& mask,
 }
 
 absl::Status FillAttentionMask(litert::TensorBuffer& mask, int start_timestep,
-                               int steps,
-                               AttentionMaskDataType mask_data_type) {
+                               int steps) {
   auto mask_tensor_type = mask.TensorType();
   RET_CHECK(mask_tensor_type) << "Failed to get attention mask tensor type.";
   RET_CHECK_EQ(mask_tensor_type->Layout().Rank(), 4)
@@ -368,14 +353,14 @@ absl::Status FillAttentionMask(litert::TensorBuffer& mask, int start_timestep,
     int current_step = start_timestep + i;
     int offset = i * channel_size;
     // For current step = n, we fill (n+1) positions for the mask sequence.
-    switch (mask_data_type) {
-      case AttentionMaskDataType::BOOLEAN: {
+    switch (mask_tensor_type->ElementType()) {
+      case litert::ElementType::Bool: {
         // Boolean mask: Fill value = true.
         bool* mask_bool_ptr = static_cast<bool*>(mask_lock_and_addr->second);
         std::fill(mask_bool_ptr + offset,
                   mask_bool_ptr + offset + current_step + 1, true);
       } break;
-      case AttentionMaskDataType::FLOAT: {
+      case litert::ElementType::Float32: {
         // Float mask: Fill value = 0.0f.
         float* mask_float_ptr = static_cast<float*>(mask_lock_and_addr->second);
         std::fill(mask_float_ptr + offset,

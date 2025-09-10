@@ -269,11 +269,8 @@ absl::Status LlmLiteRtCompiledModelExecutor::PrefillInternal(
 
     memset(prefill_input_pos_ptr, 0, prefill_input_pos_size);
     if (has_input_attn_mask) {
-      RET_CHECK(signatures_.input_attn_mask_data_type.has_value())
-          << "Attention mask data type is not provided.";
       RETURN_IF_ERROR(InitializeAttentionMask(
           prefill_input_buffers_[signatures_.input_attn_mask.value()],
-          signatures_.input_attn_mask_data_type.value(),
           IsCalculationPrecisionF16()));
     }
     // We will not fill the last token of the current input into the
@@ -342,8 +339,7 @@ absl::Status LlmLiteRtCompiledModelExecutor::PrefillInternal(
       RETURN_IF_ERROR(FillAttentionMask(
           prefill_input_buffers_[signatures_.input_attn_mask.value()],
           start_step,
-          /*steps=*/current_step_ - start_step,
-          signatures_.input_attn_mask_data_type.value()));
+          /*steps=*/current_step_ - start_step));
     }
   }
   next_input_token_id_ = ids[ids.size() - 1];
@@ -479,16 +475,12 @@ absl::Status LlmLiteRtCompiledModelExecutor::Decode(
         static_cast<int32_t*>(decode_input_pos_lock_and_addr->second);
     bool has_input_attn_mask = signatures_.input_attn_mask.has_value();
     if (has_input_attn_mask) {
-      RET_CHECK(signatures_.input_attn_mask_data_type.has_value())
-          << "Attention mask data type is not provided.";
       RETURN_IF_ERROR(InitializeAttentionMask(
           decode_input_buffers_[signatures_.input_attn_mask.value()],
-          signatures_.input_attn_mask_data_type.value(),
           IsCalculationPrecisionF16()));
       RETURN_IF_ERROR(FillAttentionMask(
           decode_input_buffers_[signatures_.input_attn_mask.value()],
-          current_step_, /*steps=*/1,
-          signatures_.input_attn_mask_data_type.value()));
+          current_step_, /*steps=*/1));
     }
     decode_input_pos_ptr[0] = current_step_;
   }
@@ -596,16 +588,12 @@ LlmLiteRtCompiledModelExecutor::DecodeLogits(const ExecutorInputs& inputs) {
         static_cast<int32_t*>(decode_input_pos_lock_and_addr->second);
     bool has_input_attn_mask = signatures_.input_attn_mask.has_value();
     if (has_input_attn_mask) {
-      RET_CHECK(signatures_.input_attn_mask_data_type.has_value())
-          << "Attention mask data type is not provided.";
       RETURN_IF_ERROR(InitializeAttentionMask(
           decode_input_buffers_[signatures_.input_attn_mask.value()],
-          signatures_.input_attn_mask_data_type.value(),
           IsCalculationPrecisionF16()));
       RETURN_IF_ERROR(FillAttentionMask(
           decode_input_buffers_[signatures_.input_attn_mask.value()],
-          current_step_, /*steps=*/1,
-          signatures_.input_attn_mask_data_type.value()));
+          current_step_, /*steps=*/1));
     }
     decode_input_pos_ptr[0] = current_step_;
   }

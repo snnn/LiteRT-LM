@@ -54,8 +54,6 @@ struct ModelSignatures {
   // Input attention mask signature name. For both prefill and decode.
   // Not all models require this input.
   std::optional<std::string> input_attn_mask;
-  // The data type of the attention mask.
-  std::optional<AttentionMaskDataType> input_attn_mask_data_type;
   // Input embeddings signature name. For both prefill and decode. When this
   // is provided, the embedding model will be used to look up the embeddings and
   // the input_tokens value must not be set.
@@ -99,10 +97,8 @@ GetOptimizedPrefillWorkGroups(
 
 // Initializes the attention mask tensor for prefill/decode.
 // The mask is a 4D tensor with shape [batch=1, seq_len, 1, max_kv_len].
-// The default value for mask is different for different mask data types, and
-// different calculation precisions.
+// is_f16 only applies to FLOAT mask data type.
 absl::Status InitializeAttentionMask(::litert::TensorBuffer& mask,
-                                     AttentionMaskDataType mask_data_type,
                                      bool is_f16);
 
 // Fill attention mask for a given range of timesteps.
@@ -110,9 +106,8 @@ absl::Status InitializeAttentionMask(::litert::TensorBuffer& mask,
 // mask - The attention mask tensor to be filled.
 // start_timestep - The starting timestep to be filled at seq = 1.
 // steps - The number of steps to fill (the number of sequences to be filled).
-// mask_data_type - The data type of the attention mask (e.g. boolean, float).
 absl::Status FillAttentionMask(::litert::TensorBuffer& mask, int start_timestep,
-                               int steps, AttentionMaskDataType mask_data_type);
+                               int steps);
 
 // Builds the model resources from the model_path for compiled model only.
 // Supports .task and .litertlm formats.

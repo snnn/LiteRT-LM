@@ -87,6 +87,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@litert//litert/cc:litert_buffer_ref",
+        "@litert//litert/cc:litert_element_type",
         "@litert//litert/cc:litert_expected",
         "@litert//litert/cc:litert_macros",
         "//runtime/components:model_resources",
@@ -116,14 +117,32 @@ cc_test(
     name = "litert_compiled_model_executor_utils_test",
     srcs = ["litert_compiled_model_executor_utils_test.cc"],
     data = ["//runtime/testdata"],
+    tags = ["requires-mac-inputs:hard"],  # Required for running on Forge on Mac.
     deps = [
+        ":executor_settings_base",
         ":litert_compiled_model_executor_utils",
-        ":llm_executor_settings",
         "@com_google_googletest//:gtest_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
+        "@litert//litert/c:litert_tensor_buffer_types",
+        "@litert//litert/cc:litert_element_type",
+        "@litert//litert/cc:litert_layout",
+        "@litert//litert/test:matchers",
         "//runtime/components:model_resources",
         "//runtime/util:scoped_file",
         "//runtime/util:test_utils",
-    ],
+    ] + select({
+        "@litert//litert:litert_link_capi_so": [
+            "@litert//litert/cc:litert_environment",
+            "@litert//litert/cc:litert_model",
+            "@litert//litert/cc:litert_tensor_buffer",
+        ],
+        "//conditions:default": [
+            "@litert//litert/cc/internal:litert_environment",
+            "@litert//litert/cc/internal:litert_model",
+            "@litert//litert/cc/internal:litert_tensor_buffer",
+        ],
+    }),
 )
 
 cc_library(
