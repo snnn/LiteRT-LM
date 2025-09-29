@@ -51,7 +51,9 @@ SyntaxType GetSyntaxType(absl::string_view syntax_type);
 //      of the tool call string.
 //
 // Returns:
-//   A JSON array containing "text" and "tool_call" content items.
+//   A JSON object with two fields:
+//     - `content`: A list of JSON objects representing the message content.
+//     - `tool_calls`: A list of JSON objects representing the tool calls.
 absl::StatusOr<nlohmann::ordered_json> ParseTextAndToolCalls(
     absl::string_view response_str, absl::string_view code_fence_start,
     absl::string_view code_fence_end, SyntaxType syntax_type,

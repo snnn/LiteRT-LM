@@ -35,12 +35,14 @@ TEST(ParserUtilsTest, TextOnly) {
                                     /*code_fence_start=*/"```tool_code\n",
                                     /*code_fence_end=*/"\n```",
                                     /*syntax_type=*/SyntaxType::kPython),
-              IsOkAndHolds(nlohmann::ordered_json::parse(R"json([
-                {
-                  "type": "text",
-                  "text": "This is some text."
-                }
-              ])json")));
+              IsOkAndHolds(nlohmann::ordered_json::parse(R"json({
+                "content":[
+                  {
+                    "type": "text",
+                    "text": "This is some text."
+                  }
+                ]
+              })json")));
 }
 
 TEST(ParserUtilsTest, ParsePythonToolCall) {
@@ -50,17 +52,16 @@ tool_name(x=1)
                                     /*code_fence_start=*/"```tool_code\n",
                                     /*code_fence_end=*/"\n```",
                                     /*syntax_type=*/SyntaxType::kPython),
-              IsOkAndHolds(nlohmann::ordered_json::parse(R"json([
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+              IsOkAndHolds(nlohmann::ordered_json::parse(R"json({
+                "tool_calls": [
+                  {
                     "name": "tool_name",
                     "args": {
                       "x": 1
                     }
                   }
-                }
-              ])json")));
+                ]
+              })json")));
 }
 
 TEST(ParserUtilsTest, ParsePythonParallelCalls) {
@@ -71,26 +72,22 @@ tool_2(y=2)
                                     /*code_fence_start=*/"```tool_code\n",
                                     /*code_fence_end=*/"\n```",
                                     /*syntax_type=*/SyntaxType::kPython),
-              IsOkAndHolds(nlohmann::ordered_json::parse(R"json([
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+              IsOkAndHolds(nlohmann::ordered_json::parse(R"json({
+                "tool_calls": [
+                  {
                     "name": "tool_1",
                     "args": {
                       "x": 1
                     }
-                  }
-                },
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+                  },
+                  {
                     "name": "tool_2",
                     "args": {
                       "y": 2
                     }
                   }
-                }
-              ])json")));
+                ]
+              })json")));
 }
 
 TEST(ParserUtilsTest, ParseTextAndPythonToolCalls) {
@@ -102,21 +99,22 @@ tool_name(x=1)
                   /*code_fence_start=*/"```tool_code\n",
                   /*code_fence_end=*/"\n```",
                   /*syntax_type=*/SyntaxType::kPython),
-              IsOkAndHolds(nlohmann::ordered_json::parse(R"json([
-                {
-                  "type": "text",
-                  "text": "This is some text.\n"
-                },
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+              IsOkAndHolds(nlohmann::ordered_json::parse(R"json({
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "This is some text.\n"
+                  }
+                ],
+                "tool_calls": [
+                  {
                     "name": "tool_name",
                     "args": {
                       "x": 1
                     }
                   }
-                }
-              ])json")));
+                ]
+              })json")));
 }
 
 TEST(ParserUtilsTest, ParsePythonCallWithRegex) {
@@ -129,17 +127,16 @@ print(tool_name(x=1))
                             /*syntax_type=*/SyntaxType::kPython,
                             /*escape_fence_strings=*/true,
                             /*tool_code_regex=*/R"(print\((.+\(.*\))\))"),
-      IsOkAndHolds(nlohmann::ordered_json::parse(R"json([
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+      IsOkAndHolds(nlohmann::ordered_json::parse(R"json({
+                "tool_calls": [
+                  {
                     "name": "tool_name",
                     "args": {
                       "x": 1
                     }
                   }
-                }
-              ])json")));
+                ]
+              })json")));
 }
 
 TEST(ParserUtilsTest, ParseJsonToolCall) {
@@ -149,17 +146,16 @@ TEST(ParserUtilsTest, ParseJsonToolCall) {
                                     /*code_fence_start=*/"```tool_code\n",
                                     /*code_fence_end=*/"\n```",
                                     /*syntax_type=*/SyntaxType::kJson),
-              IsOkAndHolds(nlohmann::ordered_json::parse(R"json([
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+              IsOkAndHolds(nlohmann::ordered_json::parse(R"json({
+                "tool_calls": [
+                  {
                     "name": "tool_name",
                     "args": {
                       "x": 1
                     }
                   }
-                }
-              ])json")));
+                ]
+              })json")));
 }
 
 TEST(ParserUtilsTest, ParseJsonParallelCalls) {
@@ -173,26 +169,22 @@ TEST(ParserUtilsTest, ParseJsonParallelCalls) {
                   /*code_fence_start=*/"```tool_code\n",
                   /*code_fence_end=*/"\n```",
                   /*syntax_type=*/SyntaxType::kJson),
-              IsOkAndHolds(nlohmann::ordered_json::parse(R"json([
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+              IsOkAndHolds(nlohmann::ordered_json::parse(R"json({
+                "tool_calls": [
+                  {
                     "name": "tool_1",
                     "args": {
                       "x": 1
                     }
-                  }
-                },
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+                  },
+                  {
                     "name": "tool_2",
                     "args": {
                       "y": 2
                     }
                   }
-                }
-              ])json")));
+                ]
+              })json")));
 }
 
 TEST(ParserUtilsTest, ParseTextAndJsonToolCalls) {
@@ -204,21 +196,22 @@ TEST(ParserUtilsTest, ParseTextAndJsonToolCalls) {
                   /*code_fence_start=*/"```tool_code\n",
                   /*code_fence_end=*/"\n```",
                   /*syntax_type=*/SyntaxType::kJson),
-              IsOkAndHolds(nlohmann::ordered_json::parse(R"json([
-                {
-                  "type": "text",
-                  "text": "This is some text.\n"
-                },
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+              IsOkAndHolds(nlohmann::ordered_json::parse(R"json({
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "This is some text.\n"
+                  }
+                ],
+                "tool_calls": [
+                  {
                     "name": "tool_name",
                     "args": {
                       "x": 1
                     }
                   }
-                }
-              ])json")));
+                ]
+              })json")));
 }
 
 TEST(ParserUtilsTest, ParseTextThenCodeThenText) {
@@ -232,25 +225,26 @@ This is some more text.
                   /*code_fence_start=*/"```tool_code\n",
                   /*code_fence_end=*/"\n```",
                   /*syntax_type=*/SyntaxType::kPython),
-              IsOkAndHolds(nlohmann::ordered_json::parse(R"json([
-                {
-                  "type": "text",
-                  "text": "This is some text.\n"
-                },
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+              IsOkAndHolds(nlohmann::ordered_json::parse(R"json({
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "This is some text.\n"
+                  },
+                  {
+                    "type": "text",
+                    "text": "\nThis is some more text.\n"
+                  }
+                ],
+                "tool_calls": [
+                  {
                     "name": "tool_1",
                     "args": {
                       "x": 1
                     }
                   }
-                },
-                {
-                  "type": "text",
-                  "text": "\nThis is some more text.\n"
-                }
-              ])json")));
+                ]
+              })json")));
 }
 
 TEST(ParserUtilsTest, ParseTextThenCodeThenTextThenCode) {
@@ -266,34 +260,32 @@ tool_2(y=2)
                   /*code_fence_start=*/"```tool_code\n",
                   /*code_fence_end=*/"\n```",
                   /*syntax_type=*/SyntaxType::kPython),
-              IsOkAndHolds(nlohmann::ordered_json::parse(R"json([
-                {
-                  "type": "text",
-                  "text": "This is some text.\n"
-                },
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+              IsOkAndHolds(nlohmann::ordered_json::parse(R"json({
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "This is some text.\n"
+                  },
+                  {
+                    "type": "text",
+                    "text": "\nThis is some more text.\n"
+                  }
+                ],
+                "tool_calls": [
+                  {
                     "name": "tool_1",
                     "args": {
                       "x": 1
                     }
-                  }
-                },
-                {
-                  "type": "text",
-                  "text": "\nThis is some more text.\n"
-                },
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+                  },
+                  {
                     "name": "tool_2",
                     "args": {
                       "y": 2
                     }
                   }
-                }
-              ])json")));
+                ]
+              })json")));
 }
 
 TEST(ParserUtilsTest, ParseTextThenParallelToolCalls) {
@@ -306,31 +298,28 @@ tool_2(y=2)
                   /*code_fence_start=*/"```tool_code\n",
                   /*code_fence_end=*/"\n```",
                   /*syntax_type=*/SyntaxType::kPython),
-              IsOkAndHolds(nlohmann::ordered_json::parse(R"json([
-                {
-                  "type": "text",
-                  "text": "This is some text.\n"
-                },
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+              IsOkAndHolds(nlohmann::ordered_json::parse(R"json({
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "This is some text.\n"
+                  }
+                ],
+                "tool_calls": [
+                  {
                     "name": "tool_1",
                     "args": {
                       "x": 1
                     }
-                  }
-                },
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+                  },
+                  {
                     "name": "tool_2",
                     "args": {
                       "y": 2
                     }
                   }
-                }
-              ]
-              )json")));
+                ]
+              })json")));
 }
 
 TEST(ParserUtilsTest, ParseTextThenParallelToolCallsThenText) {
@@ -345,35 +334,32 @@ This is some more text.
                   /*code_fence_start=*/"```tool_code\n",
                   /*code_fence_end=*/"\n```",
                   /*syntax_type=*/SyntaxType::kPython),
-              IsOkAndHolds(nlohmann::ordered_json::parse(R"json([
-                {
-                  "type": "text",
-                  "text": "This is some text.\n"
-                },
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+              IsOkAndHolds(nlohmann::ordered_json::parse(R"json({
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "This is some text.\n"
+                  },
+                  {
+                    "type": "text",
+                    "text": "\nThis is some more text.\n"
+                  }
+                ],
+                "tool_calls": [
+                  {
                     "name": "tool_1",
                     "args": {
                       "x": 1
                     }
-                  }
-                },
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+                  },
+                  {
                     "name": "tool_2",
                     "args": {
                       "y": 2
                     }
                   }
-                },
-                {
-                  "type": "text",
-                  "text": "\nThis is some more text.\n"
-                }
-              ]
-              )json")));
+                ]
+              })json")));
 }
 
 TEST(ParserUtilsTest, ParseTextThenCodeThenCode) {
@@ -390,39 +376,36 @@ This is some more text.
                   /*code_fence_start=*/"```tool_code\n",
                   /*code_fence_end=*/"\n```",
                   /*syntax_type=*/SyntaxType::kPython),
-              IsOkAndHolds(nlohmann::ordered_json::parse(R"json([
-                {
-                  "type": "text",
-                  "text": "This is some text.\n"
-                },
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+              IsOkAndHolds(nlohmann::ordered_json::parse(R"json({
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "This is some text.\n"
+                  },
+                  {
+                    "type": "text",
+                    "text": "\n"
+                  },
+                  {
+                    "type": "text",
+                    "text": "\nThis is some more text.\n"
+                  }
+                ],
+                "tool_calls": [
+                  {
                     "name": "tool_1",
                     "args": {
                       "x": 1
                     }
-                  }
-                },
-                {
-                  "type": "text",
-                  "text": "\n"
-                },
-                {
-                  "type": "tool_call",
-                  "tool_call": {
+                  },
+                  {
                     "name": "tool_2",
                     "args": {
                       "y": 2
                     }
                   }
-                },
-                {
-                  "type": "text",
-                  "text": "\nThis is some more text.\n"
-                }
-              ]
-              )json")));
+                ]
+              })json")));
 }
 
 TEST(ParserUtilsTest, IncompleteToolCodeIsText) {
@@ -434,12 +417,14 @@ tool_name(x=1)
                   /*code_fence_start=*/"```tool_code\n",
                   /*code_fence_end=*/"\n```",
                   /*syntax_type=*/SyntaxType::kPython),
-              IsOkAndHolds(nlohmann::ordered_json::parse(R"json([
-                {
-                  "type": "text",
-                  "text": "```tool_code\ntool_name(x=1)\n"
-                }
-              ])json")));
+              IsOkAndHolds(nlohmann::ordered_json::parse(R"json({
+                "content":[
+                  {
+                    "type": "text",
+                    "text": "```tool_code\ntool_name(x=1)\n"
+                  }
+                ]
+              })json")));
 }
 
 }  // namespace

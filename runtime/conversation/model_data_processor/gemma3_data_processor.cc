@@ -72,20 +72,26 @@ absl::StatusOr<Message> Gemma3DataProcessor::ToMessageImpl(
     const Responses& responses, const Gemma3DataProcessorArguments& args) {
   ASSIGN_OR_RETURN(absl::string_view response_text,
                    responses.GetResponseTextAt(0));
-  nlohmann::ordered_json content;
+  nlohmann::ordered_json message = {{"role", "assistant"}};
   if (preface_.has_value() && std::holds_alternative<JsonPreface>(*preface_) &&
       !std::get<JsonPreface>(*preface_).tools.empty()) {
     ASSIGN_OR_RETURN(
-        content, ParseTextAndToolCalls(
-                     response_text, config_.code_fence_start,
-                     config_.code_fence_end, GetSyntaxType(config_.syntax_type),
-                     config_.escape_fence_strings, config_.tool_code_regex));
+        nlohmann::ordered_json content_and_tool_calls,
+        ParseTextAndToolCalls(
+            response_text, config_.code_fence_start, config_.code_fence_end,
+            GetSyntaxType(config_.syntax_type), config_.escape_fence_strings,
+            config_.tool_code_regex));
+    if (content_and_tool_calls.contains("content")) {
+      message["content"] = content_and_tool_calls["content"];
+    }
+    if (content_and_tool_calls.contains("tool_calls")) {
+      message["tool_calls"] = content_and_tool_calls["tool_calls"];
+    }
   } else {
-    content = nlohmann::ordered_json::array(
+    message["content"] = nlohmann::ordered_json::array(
         {{{"type", "text"}, {"text", std::string(response_text)}}});
   }
-  return nlohmann::ordered_json::object(
-      {{"role", "assistant"}, {"content", content}});
+  return message;
 }
 
 absl::StatusOr<nlohmann::ordered_json> Gemma3DataProcessor::FormatTools(

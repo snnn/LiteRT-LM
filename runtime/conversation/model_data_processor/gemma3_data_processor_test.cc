@@ -163,14 +163,23 @@ tool_name(x=1)
   ASSERT_TRUE(std::holds_alternative<nlohmann::ordered_json>(message));
   const nlohmann::ordered_json& json_message =
       std::get<nlohmann::ordered_json>(message);
-  EXPECT_EQ(json_message,
-            nlohmann::ordered_json(
-                {{"role", "assistant"},
-                 {"content",
-                  {{{"type", "text"}, {"text", "This is some text.\n"}},
-                   {{"type", "tool_call"},
-                    {"tool_call",
-                     {{"name", "tool_name"}, {"args", {{"x", 1}}}}}}}}}));
+  EXPECT_EQ(json_message, nlohmann::ordered_json::parse(R"json({
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "This is some text.\n"
+      }
+    ],
+    "tool_calls": [
+      {
+        "name": "tool_name",
+        "args": {
+          "x": 1
+        }
+      }
+    ]
+  })json"));
 }
 
 TEST(Gemma3DataProcessorTest, PromptTemplateToInputDataVectorTextOnly) {

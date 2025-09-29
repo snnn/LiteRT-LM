@@ -88,7 +88,7 @@ absl::StatusOr<nlohmann::ordered_json> ParseTextAndToolCalls(
     absl::string_view response_str, absl::string_view code_fence_start,
     absl::string_view code_fence_end, SyntaxType syntax_type,
     bool escape_fence_strings, absl::string_view tool_code_regex) {
-  nlohmann::ordered_json content = nlohmann::json::array();
+  nlohmann::ordered_json result = nlohmann::json::object();
   RE2 regex = TextAndToolCodeRegex(code_fence_start, code_fence_end,
                                    escape_fence_strings);
   if (!regex.ok()) {
@@ -101,7 +101,7 @@ absl::StatusOr<nlohmann::ordered_json> ParseTextAndToolCalls(
   while (RE2::Consume(&response_str, regex, &text, &code_block)) {
     // Append text to the content array.
     if (!text.empty()) {
-      content.push_back({{"type", "text"}, {"text", text}});
+      result["content"].push_back({{"type", "text"}, {"text", text}});
     }
 
     // Before parsing the code block, apply tool_code_regex to each line.
@@ -125,10 +125,7 @@ absl::StatusOr<nlohmann::ordered_json> ParseTextAndToolCalls(
         return absl::InvalidArgumentError("Unsupported syntax type.");
       }
       for (const auto& tool_call : tool_calls) {
-        nlohmann::ordered_json content_part;
-        content_part["type"] = "tool_call";
-        content_part["tool_call"] = tool_call;
-        content.push_back(content_part);
+        result["tool_calls"].push_back(tool_call);
       }
     }
     text = "";
@@ -137,10 +134,10 @@ absl::StatusOr<nlohmann::ordered_json> ParseTextAndToolCalls(
 
   // Append the remaining text to the content array.
   if (!response_str.empty()) {
-    content.push_back({{"type", "text"}, {"text", response_str}});
+    result["content"].push_back({{"type", "text"}, {"text", response_str}});
   }
 
-  return content;
+  return result;
 }
 
 }  // namespace litert::lm

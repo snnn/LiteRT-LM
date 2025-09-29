@@ -35,13 +35,6 @@ nlohmann::ordered_json TextMessage(absl::string_view text) {
   return message;
 }
 
-nlohmann::ordered_json ToolCallMessage(nlohmann::ordered_json tool_call) {
-  nlohmann::ordered_json message;
-  message["role"] = "assistant";
-  message["content"] = {{{"type", "tool_call"}, {"tool_call", tool_call}}};
-  return message;
-}
-
 class UserMessageObservable : public MessageObservable {
  public:
   void OnMessage(const Message& message) override {
@@ -132,14 +125,17 @@ TEST_F(InternalObservableAdapterTest, ToolCall) {
   observer->OnNext(CreateResponses("\n```"));
 
   EXPECT_THAT(user_observer_->output(),
-              ElementsAre(ToolCallMessage(nlohmann::ordered_json::parse(R"json(
-                {
-                  "name": "tool_name",
-                  "args": {
-                    "x": 1
+              ElementsAre(nlohmann::ordered_json::parse(R"json({
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "name": "tool_name",
+                    "args": {
+                      "x": 1
+                    }
                   }
-                }
-              )json"))));
+                ]
+              })json")));
 }
 
 TEST_F(InternalObservableAdapterTest, TextAndToolCall) {
@@ -158,14 +154,17 @@ TEST_F(InternalObservableAdapterTest, TextAndToolCall) {
   EXPECT_THAT(user_observer_->output(),
               ElementsAre(TextMessage("this "), TextMessage("is "),
                           TextMessage("some "), TextMessage("text\n"),
-                          ToolCallMessage(nlohmann::ordered_json::parse(R"json(
-                {
-                  "name": "tool_name",
-                  "args": {
-                    "x": 1
-                  }
-                }
-              )json"))));
+                          nlohmann::ordered_json::parse(R"json({
+                            "role": "assistant",
+                            "tool_calls": [
+                              {
+                                "name": "tool_name",
+                                "args": {
+                                  "x": 1
+                                }
+                              }
+                            ]
+                          })json")));
 }
 
 TEST_F(InternalObservableAdapterTest, SplitCodeFenceStart) {
@@ -179,14 +178,17 @@ TEST_F(InternalObservableAdapterTest, SplitCodeFenceStart) {
   observer->OnNext(CreateResponses("\n```"));
 
   EXPECT_THAT(user_observer_->output(),
-              ElementsAre(ToolCallMessage(nlohmann::ordered_json::parse(R"json(
-                {
-                  "name": "tool_name",
-                  "args": {
-                    "x": 1
+              ElementsAre(nlohmann::ordered_json::parse(R"json({
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "name": "tool_name",
+                    "args": {
+                      "x": 1
+                    }
                   }
-                }
-              )json"))));
+                ]
+              })json")));
 }
 
 TEST_F(InternalObservableAdapterTest, TextBeforeSplitCodeFenceStart) {
@@ -199,16 +201,19 @@ TEST_F(InternalObservableAdapterTest, TextBeforeSplitCodeFenceStart) {
   observer->OnNext(CreateResponses("(x=1)"));
   observer->OnNext(CreateResponses("\n```"));
 
-  EXPECT_THAT(user_observer_->output(),
-              ElementsAre(TextMessage("text"),
-                          ToolCallMessage(nlohmann::ordered_json::parse(R"json(
-                {
-                  "name": "tool_name",
-                  "args": {
-                    "x": 1
+  EXPECT_THAT(
+      user_observer_->output(),
+      ElementsAre(TextMessage("text"), nlohmann::ordered_json::parse(R"json({
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "name": "tool_name",
+                    "args": {
+                      "x": 1
+                    }
                   }
-                }
-              )json"))));
+                ]
+              })json")));
 }
 
 TEST_F(InternalObservableAdapterTest, ToolCallAfterSplitCodeFenceStart) {
@@ -221,14 +226,17 @@ TEST_F(InternalObservableAdapterTest, ToolCallAfterSplitCodeFenceStart) {
   observer->OnNext(CreateResponses("\n```"));
 
   EXPECT_THAT(user_observer_->output(),
-              ElementsAre(ToolCallMessage(nlohmann::ordered_json::parse(R"json(
-                {
-                  "name": "tool_name",
-                  "args": {
-                    "x": 1
+              ElementsAre(nlohmann::ordered_json::parse(R"json({
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "name": "tool_name",
+                    "args": {
+                      "x": 1
+                    }
                   }
-                }
-              )json"))));
+                ]
+              })json")));
 }
 
 TEST_F(InternalObservableAdapterTest, TextOnBothSidesOfCodeFenceStart) {
@@ -239,16 +247,19 @@ TEST_F(InternalObservableAdapterTest, TextOnBothSidesOfCodeFenceStart) {
   observer->OnNext(CreateResponses("(x=1)"));
   observer->OnNext(CreateResponses("\n```"));
 
-  EXPECT_THAT(user_observer_->output(),
-              ElementsAre(TextMessage("text"),
-                          ToolCallMessage(nlohmann::ordered_json::parse(R"json(
-                {
-                  "name": "tool_name",
-                  "args": {
-                    "x": 1
+  EXPECT_THAT(
+      user_observer_->output(),
+      ElementsAre(TextMessage("text"), nlohmann::ordered_json::parse(R"json({
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "name": "tool_name",
+                    "args": {
+                      "x": 1
+                    }
                   }
-                }
-              )json"))));
+                ]
+              })json")));
 }
 
 TEST_F(InternalObservableAdapterTest, SplitCodeFenceEnd) {
@@ -261,14 +272,17 @@ TEST_F(InternalObservableAdapterTest, SplitCodeFenceEnd) {
   observer->OnNext(CreateResponses("``"));
 
   EXPECT_THAT(user_observer_->output(),
-              ElementsAre(ToolCallMessage(nlohmann::ordered_json::parse(R"json(
-                {
-                  "name": "tool_name",
-                  "args": {
-                    "x": 1
+              ElementsAre(nlohmann::ordered_json::parse(R"json({
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "name": "tool_name",
+                    "args": {
+                      "x": 1
+                    }
                   }
-                }
-              )json"))));
+                ]
+              })json")));
 }
 
 TEST_F(InternalObservableAdapterTest, TextBeforeSplitCodeFenceEnd) {
@@ -281,14 +295,17 @@ TEST_F(InternalObservableAdapterTest, TextBeforeSplitCodeFenceEnd) {
   observer->OnNext(CreateResponses("`"));
 
   EXPECT_THAT(user_observer_->output(),
-              ElementsAre(ToolCallMessage(nlohmann::ordered_json::parse(R"json(
-                {
-                  "name": "tool_name",
-                  "args": {
-                    "x": 1
+              ElementsAre(nlohmann::ordered_json::parse(R"json({
+                "role": "assistant",
+                "tool_calls": [
+                  {
+                    "name": "tool_name",
+                    "args": {
+                      "x": 1
+                    }
                   }
-                }
-              )json"))));
+                ]
+              })json")));
 }
 
 TEST_F(InternalObservableAdapterTest, TextAfterSplitCodeFenceEnd) {
@@ -301,14 +318,17 @@ TEST_F(InternalObservableAdapterTest, TextAfterSplitCodeFenceEnd) {
   observer->OnNext(CreateResponses("``text"));
 
   EXPECT_THAT(user_observer_->output(),
-              ElementsAre(ToolCallMessage(nlohmann::ordered_json::parse(R"json(
-                {
-                  "name": "tool_name",
-                  "args": {
-                    "x": 1
-                  }
-                }
-              )json")),
+              ElementsAre(nlohmann::ordered_json::parse(R"json({
+                            "role": "assistant",
+                            "tool_calls": [
+                              {
+                                "name": "tool_name",
+                                "args": {
+                                  "x": 1
+                                }
+                              }
+                            ]
+                          })json"),
                           TextMessage("text")));
 }
 
@@ -323,14 +343,17 @@ TEST_F(InternalObservableAdapterTest,
   observer->OnNext(CreateResponses("``text"));
 
   EXPECT_THAT(user_observer_->output(),
-              ElementsAre(ToolCallMessage(nlohmann::ordered_json::parse(R"json(
-                {
-                  "name": "tool_name",
-                  "args": {
-                    "x": 1
-                  }
-                }
-              )json")),
+              ElementsAre(nlohmann::ordered_json::parse(R"json({
+                            "role": "assistant",
+                            "tool_calls": [
+                              {
+                                "name": "tool_name",
+                                "args": {
+                                  "x": 1
+                                }
+                              }
+                            ]
+                          })json"),
                           TextMessage("text")));
 }
 
@@ -347,23 +370,17 @@ TEST_F(InternalObservableAdapterTest, ParallelToolCalls) {
               ElementsAre(nlohmann::ordered_json::parse(R"json(
                 {
                   "role": "assistant",
-                  "content": [
+                  "tool_calls": [
                     {
-                      "type": "tool_call",
-                      "tool_call": {
-                        "name": "tool_a",
-                        "args": {
-                          "x": 1
-                        }
+                      "name": "tool_a",
+                      "args": {
+                        "x": 1
                       }
                     },
                     {
-                      "type": "tool_call",
-                      "tool_call": {
-                        "name": "tool_b",
-                        "args": {
-                          "y": "z"
-                        }
+                      "name": "tool_b",
+                      "args": {
+                        "y": "z"
                       }
                     }
                   ]
@@ -382,22 +399,28 @@ TEST_F(InternalObservableAdapterTest, TwoConsecutiveToolCodeBlocks) {
   observer->OnNext(CreateResponses("```"));
 
   EXPECT_THAT(user_observer_->output(),
-              ElementsAre(ToolCallMessage(nlohmann::ordered_json::parse(R"json(
-                    {
-                      "name": "tool_a",
-                      "args": {
-                        "x": 1
-                      }
-                    }
-                  )json")),
-                          ToolCallMessage(nlohmann::ordered_json::parse(R"json(
-                    {
-                      "name": "tool_b",
-                      "args": {
-                        "y": "z"
-                      }
-                    }
-                  )json"))));
+              ElementsAre(nlohmann::ordered_json::parse(R"json({
+                            "role": "assistant",
+                            "tool_calls": [
+                              {
+                                "name": "tool_a",
+                                "args": {
+                                  "x": 1
+                                }
+                              }
+                            ]
+                          })json"),
+                          nlohmann::ordered_json::parse(R"json({
+                            "role": "assistant",
+                            "tool_calls": [
+                              {
+                                "name": "tool_b",
+                                "args": {
+                                  "y": "z"
+                                }
+                              }
+                            ]
+                          })json")));
 }
 
 TEST_F(InternalObservableAdapterTest, IncompleteToolCodeBlock) {
@@ -406,9 +429,11 @@ TEST_F(InternalObservableAdapterTest, IncompleteToolCodeBlock) {
 
   observer->OnNext(CreateResponses("```tool_code\n"));
   observer->OnNext(CreateResponses("tool_name(x=1)"));
+  observer->OnDone();
 
-  EXPECT_THAT(user_observer_->output(), IsEmpty());
-  // TODO: Remainder is everything.
+  // The incomplete tool code block is sent to the observer as a text message.
+  EXPECT_THAT(user_observer_->output(),
+              ElementsAre(TextMessage("```tool_code\ntool_name(x=1)")));
 }
 
 TEST_F(InternalObservableAdapterTest, WrongCodeFenceStart) {
