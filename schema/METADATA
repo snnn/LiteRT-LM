@@ -1,8 +1,0 @@
-# proto-file: devtools/metadata/metadata.proto
-# proto-message: MetaData
-# proto-import: devtools/copybara/proto/copybara_presubmit_extension.proto
-
-presubmit: {
-  review_notify: "odml-litert-lm-tools-wg+reviews"
-}
-
