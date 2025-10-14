@@ -156,7 +156,8 @@ absl::Status InternalCallbacksAdapter::ProcessResponseText(
     if (!inside_tool_call_) {
       size_t code_fence_start_pos =
           accumulated_response_text_.find(code_fence_start, cursor_);
-      if (code_fence_start_pos != std::string::npos) {
+      if (!code_fence_start.empty() &&
+          code_fence_start_pos != std::string::npos) {
         // The text from the cursor up to the code fence is normal text.
         SendMessage(absl::string_view(accumulated_response_text_)
                         .substr(cursor_, code_fence_start_pos - cursor_));
