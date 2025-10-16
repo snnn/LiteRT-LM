@@ -808,6 +808,34 @@ JNIEXPORT void JNICALL JNI_METHOD(nativeSendMessageAsync)(
   }
 }
 
+JNIEXPORT jstring JNICALL JNI_METHOD(nativeSendMessage)(
+    JNIEnv* env, jclass thiz, jlong conversation_pointer,
+    jstring messageJSONString) {
+  Conversation* conversation =
+      reinterpret_cast<Conversation*>(conversation_pointer);
+
+  const char* json_chars = env->GetStringUTFChars(messageJSONString, nullptr);
+  litert::lm::JsonMessage json_message =
+      nlohmann::ordered_json::parse(json_chars);
+  env->ReleaseStringUTFChars(messageJSONString, json_chars);
+
+  auto response = conversation->SendMessage(json_message);
+  if (!response.ok()) {
+    ThrowLiteRtLmJniException(env, "Failed to call nativeSendMessage: " +
+                                       response.status().ToString());
+    return nullptr;
+  }
+
+  if (!std::holds_alternative<litert::lm::JsonMessage>(*response)) {
+    ThrowLiteRtLmJniException(
+        env, "Failed to call nativeSendMessage: Response is not a JsonMessage");
+    return nullptr;
+  }
+
+  auto json_response = std::get<litert::lm::JsonMessage>(*response);
+  return env->NewStringUTF(json_response.dump().c_str());
+}
+
 JNIEXPORT void JNICALL JNI_METHOD(nativeConversationCancelProcess)(
     JNIEnv* env, jclass thiz, jlong conversation_pointer) {
   Conversation* conversation =

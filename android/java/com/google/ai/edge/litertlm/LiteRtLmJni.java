@@ -193,6 +193,15 @@ public final class LiteRtLmJni {
       long conversationPointer, String messageJsonString, JniMessageCallbacks callbacks);
 
   /**
+   * Send message from the given input data synchronously.
+   *
+   * @param conversationPointer A pointer to the native conversation instance.
+   * @param messageJsonString The message to be processed by the native conversation instance.
+   * @return The response message in JSON string format.
+   */
+  public static native String nativeSendMessage(long conversationPointer, String messageJsonString);
+
+  /**
    * Cancels the ongoing conversation process.
    *
    * @param conversationPointer A pointer to the native conversation instance.

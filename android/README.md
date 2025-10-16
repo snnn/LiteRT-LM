@@ -124,12 +124,35 @@ val conversation = engine.createConversation(conversationConfig)
 automatic resource management for one-shot or short-lived conversation:
 
 ```kotlin
-engine.createConversation(conversationConfig)?.use { conversation ->
+engine.createConversation(conversationConfig).use { conversation ->
     // Interact with the conversation
 }
 ```
 
 ### 4. Sending Messages
+
+There are two ways to send messages:
+
+-   **`sendMessage(message: Message): Message`**: Synchronous call that blocks
+    until the model returns a complete response. This is simpler for basic
+    request/response interactions.
+-   **`sendMessageAsync(message: Message, callbacks: MessageCallbacks)`**:
+    Asynchronous call for streaming responses. This is better for long-running
+    requests or when you want to display the response as it's being
+    generated.
+
+**Synchronous Example:**
+
+```kotlin
+import com.google.ai.edge.litertlm.Content
+import com.google.ai.edge.litertlm.Message
+
+val userMessage = Message.of("What is the capital of France?")
+val modelMessage = conversation.sendMessage(userMessage)
+print((response.contents[0] as Content.Text).text)
+```
+
+**Asynchronous Example:**
 
 Use `sendMessageAsync` to send a message to the model and receive responses
 through callbacks.

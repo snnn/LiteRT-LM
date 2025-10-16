@@ -58,7 +58,6 @@ import org.json.JSONObject
  * @property handle The native handle to the conversation object.
  * @property toolManager The ToolManager instance to use for this conversation.
  */
-// TODO(b/447439217): Support multi-modality.
 class Conversation(private val handle: Long, val toolManager: ToolManager) : AutoCloseable {
   private val _isAlive = AtomicBoolean(true)
 
@@ -67,9 +66,48 @@ class Conversation(private val handle: Long, val toolManager: ToolManager) : Aut
     get() = _isAlive.get()
 
   /**
+   * Sends a message to the model and returns the response. This is a synchronous call.
+   *
+   * This method handles potential tool calls returned by the model. If a tool call is detected, the
+   * corresponding tool is executed, and the result is sent back to the model. This process is
+   * repeated until the model returns a final response without tool calls, up to
+   * [RECURRING_TOOL_CALL_LIMIT] times.
+   *
+   * @param message The message to send to the model.
+   * @return The model's response message.
+   * @throws IllegalStateException if the conversation is not alive, if the native layer returns an
+   *   invalid response, or if the tool call limit is exceeded.
+   * @throws LiteRtLmJniException if an error occurs during the native call.
+   */
+  fun sendMessage(message: Message): Message {
+    checkIsAlive()
+
+    var currentMessageJson = JSONObject().put("role", "user").put("content", message.toJson())
+    for (i in 0..<RECURRING_TOOL_CALL_LIMIT) {
+      val responseJsonString = LiteRtLmJni.nativeSendMessage(handle, currentMessageJson.toString())
+      val responseJsonObject = JSONObject(responseJsonString)
+
+      if (responseJsonObject.has("tool_calls")) {
+        currentMessageJson = handleToolCalls(responseJsonObject)
+        // Loop back to send the tool response
+      } else if (responseJsonObject.has("content")) {
+        return jsonToMessage(responseJsonObject)
+      } else {
+        throw IllegalStateException("Invalid response from native layer: $responseJsonString")
+      }
+    }
+    throw IllegalStateException("Exceeded recurring tool call limit of $RECURRING_TOOL_CALL_LIMIT")
+  }
+
+  /**
    * Send message from the given contents in a async fashion.
    *
-   * @param contents The list of {@link Content} to be processed by the model.
+   * This method handles potential tool calls returned by the model. If a tool call is detected, the
+   * corresponding tool is executed, and the result is sent back to the model. This process is
+   * repeated until the model returns a final response without tool calls, up to
+   * [RECURRING_TOOL_CALL_LIMIT] times.
+   *
+   * @param message The message to send to the model.
    * @param callbacks The callbacks to receive the streaming responses.
    * @throws IllegalStateException if the conversation has already been closed or the content is
    *   empty.
@@ -82,54 +120,53 @@ class Conversation(private val handle: Long, val toolManager: ToolManager) : Aut
     LiteRtLmJni.nativeSendMessageAsync(handle, messageJSONObject.toString(), jniCallbacks)
   }
 
+  private fun handleToolCalls(toolCallsJsonObject: JSONObject): JSONObject {
+    val toolCallsJSONArray = toolCallsJsonObject.getJSONArray("tool_calls")
+    val toolResponsesJSONArray = JSONArray()
+
+    for (i in 0..<toolCallsJSONArray.length()) {
+      val toolCallJSONObject = toolCallsJSONArray.getJSONObject(i)
+      if (!toolCallJSONObject.has("function")) {
+        continue
+      }
+      val functionJSONObject = toolCallJSONObject.getJSONObject("function")
+      val functionName = functionJSONObject.getString("name")
+      val arguments = functionJSONObject.getJSONObject("arguments")
+
+      Log.i(TAG, "handleToolCalls: Calling tools ${functionName}")
+      val result = toolManager.execute(functionName, arguments)
+      val toolResponseJSONObject =
+        JSONObject()
+          .put("type", "tool_response")
+          .put("tool_response", JSONObject().put("name", functionName).put("value", result))
+      toolResponsesJSONArray.put(toolResponseJSONObject)
+    }
+    return JSONObject().put("role", "tool").put("content", toolResponsesJSONArray)
+  }
+
   private inner class JniMessageCallbacksImpl(private val callbacks: MessageCallbacks) :
     LiteRtLmJni.JniMessageCallbacks {
 
     /** The tool response to be returned back */
     private var pendingToolResponseJSONMessage: JSONObject? = null
+    private var toolCallCount = 0
 
     override fun onMessage(messageJsonString: String) {
       val messageJsonObject = JSONObject(messageJsonString)
 
       if (messageJsonObject.has("tool_calls")) {
-        val toolCallsJSONArray = messageJsonObject.getJSONArray("tool_calls")
-        val toolResponsesJSONArray = JSONArray()
-
-        for (i in 0..<toolCallsJSONArray.length()) {
-          val toolCallJSONObject = toolCallsJSONArray.getJSONObject(i)
-          if (!toolCallJSONObject.has("function")) {
-            continue
-          }
-          val functionJSONObject = toolCallJSONObject.getJSONObject("function")
-          val functionName = functionJSONObject.getString("name")
-          val arguments = functionJSONObject.getJSONObject("arguments")
-
-          Log.i(TAG, "onMessage: Calling tools ${functionName}")
-          val result = toolManager.execute(functionName, arguments)
-          val toolResponseJSONObject =
-            JSONObject()
-              .put("type", "tool_response")
-              .put("tool_response", JSONObject().put("name", functionName).put("value", result))
-          toolResponsesJSONArray.put(toolResponseJSONObject)
+        if (toolCallCount >= RECURRING_TOOL_CALL_LIMIT) {
+          callbacks.onError(
+            IllegalStateException(
+              "Exceeded recurring tool call limit of $RECURRING_TOOL_CALL_LIMIT"
+            )
+          )
+          return
         }
-
-        pendingToolResponseJSONMessage =
-          JSONObject().put("role", "tool").put("content", toolResponsesJSONArray)
+        toolCallCount++
+        pendingToolResponseJSONMessage = handleToolCalls(messageJsonObject)
       } else if (messageJsonObject.has("content")) {
-        val contentsJsonArray = messageJsonObject.getJSONArray("content")
-        val contents = mutableListOf<Content>()
-
-        for (i in 0..<contentsJsonArray.length()) {
-          val contentJsonObject = contentsJsonArray.getJSONObject(i)
-          val type = contentJsonObject.getString("type")
-
-          if (type == "text") {
-            contents.add(Content.Text(contentJsonObject.getString("text")))
-          } else {
-            Log.w(TAG, "onMessage: Got unsupported content type: $type")
-          }
-        }
-        callbacks.onMessage(Message.of(contents))
+        callbacks.onMessage(jsonToMessage(messageJsonObject))
       }
     }
 
@@ -208,6 +245,28 @@ class Conversation(private val handle: Long, val toolManager: ToolManager) : Aut
 
   companion object {
     private const val TAG = "Conversation"
+    /**
+     * The maximum number of times the model can call tools in a single turn before an error is
+     * thrown.
+     */
+    private const val RECURRING_TOOL_CALL_LIMIT = 25
+
+    private fun jsonToMessage(messageJsonObject: JSONObject): Message {
+      val contentsJsonArray = messageJsonObject.getJSONArray("content")
+      val contents = mutableListOf<Content>()
+
+      for (i in 0..<contentsJsonArray.length()) {
+        val contentJsonObject = contentsJsonArray.getJSONObject(i)
+        val type = contentJsonObject.getString("type")
+
+        if (type == "text") {
+          contents.add(Content.Text(contentJsonObject.getString("text")))
+        } else {
+          Log.w(TAG, "jsonToMessage: Got unsupported content type: $type")
+        }
+      }
+      return Message.of(contents)
+    }
   }
 }
 
