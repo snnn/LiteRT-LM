@@ -310,8 +310,7 @@ GetOptimizedPrefillWorkGroups(
   return work_groups;
 }
 
-absl::Status InitializeAttentionMask(litert::TensorBuffer& mask,
-                                     bool is_f16) {
+absl::Status InitializeAttentionMask(litert::TensorBuffer& mask, bool is_f16) {
   auto mask_size = mask.PackedSize();
   RET_CHECK(mask_size) << "Failed to get attention mask buffer size.";
   auto mask_tensor_type = mask.TensorType();
