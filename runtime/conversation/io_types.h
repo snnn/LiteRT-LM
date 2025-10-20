@@ -15,6 +15,7 @@
 #ifndef THIRD_PARTY_ODML_LITERT_LM_RUNTIME_CONVERSATION_IO_TYPES_H_
 #define THIRD_PARTY_ODML_LITERT_LM_RUNTIME_CONVERSATION_IO_TYPES_H_
 
+#include <ostream>
 #include <variant>
 
 #include "absl/status/status.h"  // from @com_google_absl
@@ -26,6 +27,8 @@ using JsonMessage = nlohmann::ordered_json;
 
 // Message is the data container for a single turn of the conversation.
 using Message = std::variant<JsonMessage>;
+
+std::ostream& operator<<(std::ostream& os, const Message& message);
 
 struct JsonPreface {
   // The messages in the preface. The messages provided the initial background

@@ -24,6 +24,7 @@ package(
 
 cc_library(
     name = "io_types",
+    srcs = ["io_types.cc"],
     hdrs = ["io_types.h"],
     deps = [
         "@com_google_absl//absl/status",
