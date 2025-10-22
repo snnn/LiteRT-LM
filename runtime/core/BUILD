@@ -18,7 +18,7 @@
 package(
     default_hdrs_check = "strict",
     default_visibility = [
-        "//:__subpackages__",
+        "//visibility:public",
     ],
 )
 

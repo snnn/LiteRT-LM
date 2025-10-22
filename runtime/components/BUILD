@@ -25,8 +25,7 @@ load(
 package(
     default_hdrs_check = "strict",
     default_visibility = [
-        "//third_party/deepmind/lyria_live/internal/odml:__subpackages__",
-        "//:__subpackages__",
+        "//visibility:public",
     ],
 )
 
