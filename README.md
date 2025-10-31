@@ -29,8 +29,8 @@ stack, and more flexibility. LiteRT-LM can help with all three.
     - Multi-Modality support: Vision and Audio input are supported when models
       support it. [See more details here](#multimodal)
     - Kotlin support: [Link to LiteRT-LM Android API](./android/README.md)
-    - Function calling support.
     - Conversation API: [Link to Conversation API](./docs/conversation.md)
+    - Function calling support: [Link to Tool Use](./docs/tool_use.md)
 
 *   ***June 24, 2025*** **: Run Gemma models with NPU Support (`v0.7.0`)**
     Unlock significant performance gains! Our latest release leverages the power
