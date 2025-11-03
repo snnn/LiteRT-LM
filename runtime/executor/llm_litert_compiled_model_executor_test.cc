@@ -423,6 +423,11 @@ class TfLiteModelResources : public ModelResources {
     return absl::UnimplementedError("GetLlmMetadata not implemented.");
   }
 
+  std::optional<std::string> GetTFLiteModelBackendConstraint(
+      ModelType model_type) override {
+    return std::nullopt;
+  }
+
  private:
   Model model_;
 };

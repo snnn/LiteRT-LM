@@ -42,6 +42,17 @@ using ::testing::Eq;
 using ::testing::Return;
 using ::testing::status::StatusIs;
 
+class MockTokenizer : public Tokenizer {
+ public:
+  MOCK_METHOD(absl::StatusOr<std::string>, TokenIdsToText,
+              (const std::vector<int>& token_ids), (override));
+  MOCK_METHOD(absl::StatusOr<std::vector<int>>, TextToTokenIds,
+              (absl::string_view text), (override));
+  MOCK_METHOD(absl::StatusOr<int>, TokenToId, (absl::string_view token),
+              (override));
+  MOCK_METHOD(TokenizerType, GetTokenizerType, (), (const, override));
+};
+
 proto::LlmMetadata CreateLlmMetadata() {
   proto::LlmMetadata llm_metadata;
   llm_metadata.mutable_start_token()->mutable_token_ids()->add_ids(2);
@@ -213,6 +224,239 @@ TEST(EngineSettingsTest, AudioExecutorSettingsGetModelPath) {
   EXPECT_EQ(*model_path, "test_model_path_1");
 }
 
+TEST(EngineSettingsTest, VisionAudioBackendConstraintNoConstraint) {
+  auto model_assets = ModelAssets::Create("test_model_path_1");
+  ASSERT_OK(model_assets);
+  auto settings = EngineSettings::CreateDefault(
+      *model_assets, /*backend=*/Backend::CPU, /*vision_backend=*/Backend::GPU,
+      /*audio_backend=*/Backend::GPU);
+  EXPECT_OK(settings);
+  MockTokenizer tokenizer;
+  EXPECT_CALL(tokenizer, TokenIdsToText).WillRepeatedly(Return("fake_text"));
+  EXPECT_CALL(tokenizer, TokenToId).WillRepeatedly(Return(1));
+  EXPECT_CALL(tokenizer, TextToTokenIds)
+      .WillRepeatedly(Return(std::vector<int>{1}));
+  // No vision backend constraint means it's compatible with all backends, so it
+  // should be OK even if the vision / audio models requires a backend.
+  EXPECT_OK(settings->MaybeUpdateAndValidate(tokenizer, nullptr, "",
+                                             /*vision_backend_constraint=*/{},
+                                             /*audio_backend_constraint=*/{}));
+}
+
+TEST(EngineSettingsTest, VisionBackendConstraintMatch) {
+  auto model_assets = ModelAssets::Create("test_model_path_1");
+  ASSERT_OK(model_assets);
+  auto settings = EngineSettings::CreateDefault(
+      *model_assets, /*backend=*/Backend::CPU, /*vision_backend=*/Backend::GPU);
+  EXPECT_OK(settings);
+  MockTokenizer tokenizer;
+  EXPECT_CALL(tokenizer, TokenIdsToText).WillRepeatedly(Return("fake_text"));
+  EXPECT_CALL(tokenizer, TokenToId).WillRepeatedly(Return(1));
+  EXPECT_CALL(tokenizer, TextToTokenIds)
+      .WillRepeatedly(Return(std::vector<int>{1}));
+  // The vision backend constraint matches the vision model backend, so it
+  // should be OK.
+  EXPECT_OK(settings->MaybeUpdateAndValidate(
+      tokenizer, nullptr, "", /*vision_backend_constraint=*/"gpu",
+      /*audio_backend_constraint=*/{}));
+}
+
+TEST(EngineSettingsTest, VisionBackendConstraintMatchCaseInsensitive) {
+  auto model_assets = ModelAssets::Create("test_model_path_1");
+  ASSERT_OK(model_assets);
+  auto settings = EngineSettings::CreateDefault(
+      *model_assets, /*backend=*/Backend::CPU, /*vision_backend=*/Backend::GPU);
+  EXPECT_OK(settings);
+  MockTokenizer tokenizer;
+  EXPECT_CALL(tokenizer, TokenIdsToText).WillRepeatedly(Return("fake_text"));
+  EXPECT_CALL(tokenizer, TokenToId).WillRepeatedly(Return(1));
+  EXPECT_CALL(tokenizer, TextToTokenIds)
+      .WillRepeatedly(Return(std::vector<int>{1}));
+  // The vision backend constraint matches (case insensitive) the vision model
+  // backend, so it should be OK.
+  EXPECT_OK(settings->MaybeUpdateAndValidate(
+      tokenizer, nullptr, "", /*vision_backend_constraint=*/"GPU",
+      /*audio_backend_constraint=*/{}));
+}
+
+TEST(EngineSettingsTest, VisionBackendConstraintMultiMatch) {
+  auto model_assets = ModelAssets::Create("test_model_path_1");
+  ASSERT_OK(model_assets);
+  auto settings = EngineSettings::CreateDefault(
+      *model_assets, /*backend=*/Backend::CPU, /*vision_backend=*/Backend::NPU);
+  EXPECT_OK(settings);
+  MockTokenizer tokenizer;
+  EXPECT_CALL(tokenizer, TokenIdsToText).WillRepeatedly(Return("fake_text"));
+  EXPECT_CALL(tokenizer, TokenToId).WillRepeatedly(Return(1));
+  EXPECT_CALL(tokenizer, TextToTokenIds)
+      .WillRepeatedly(Return(std::vector<int>{1}));
+  // The vision backend constraint matches one of the vision model backends,
+  // NPU in this case, so it should be OK.
+  EXPECT_OK(settings->MaybeUpdateAndValidate(
+      tokenizer, nullptr, "", /*vision_backend_constraint=*/"gpu,npu",
+      /*audio_backend_constraint=*/{}));
+}
+
+TEST(EngineSettingsTest, VisionBackendConstraintNoMatch) {
+  auto model_assets = ModelAssets::Create("test_model_path_1");
+  ASSERT_OK(model_assets);
+  auto settings = EngineSettings::CreateDefault(
+      *model_assets, /*backend=*/Backend::CPU, /*vision_backend=*/Backend::GPU);
+  EXPECT_OK(settings);
+  MockTokenizer tokenizer;
+  EXPECT_CALL(tokenizer, TokenIdsToText).WillRepeatedly(Return("fake_text"));
+  EXPECT_CALL(tokenizer, TokenToId).WillRepeatedly(Return(1));
+  EXPECT_CALL(tokenizer, TextToTokenIds)
+      .WillRepeatedly(Return(std::vector<int>{1}));
+  // The vision backend constraint does not match the vision model backend, so
+  // it should be an error.
+  EXPECT_THAT(settings->MaybeUpdateAndValidate(
+                  tokenizer, nullptr, "", /*vision_backend_constraint=*/"npu",
+                  /*audio_backend_constraint=*/{}),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(EngineSettingsTest, VisionBackendConstraintMultiNoMatch) {
+  auto model_assets = ModelAssets::Create("test_model_path_1");
+  ASSERT_OK(model_assets);
+  auto settings = EngineSettings::CreateDefault(
+      *model_assets, /*backend=*/Backend::CPU, /*vision_backend=*/Backend::GPU);
+  EXPECT_OK(settings);
+  MockTokenizer tokenizer;
+  EXPECT_CALL(tokenizer, TokenIdsToText).WillRepeatedly(Return("fake_text"));
+  EXPECT_CALL(tokenizer, TokenToId).WillRepeatedly(Return(1));
+  EXPECT_CALL(tokenizer, TextToTokenIds)
+      .WillRepeatedly(Return(std::vector<int>{1}));
+  // The vision backend constraint does not match any of the vision model
+  // backends, so it should be an error.
+  EXPECT_THAT(
+      settings->MaybeUpdateAndValidate(tokenizer, nullptr, "",
+                                       /*vision_backend_constraint=*/"cpu,npu",
+                                       /*audio_backend_constraint=*/{}),
+      StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(EngineSettingsTest, AudioBackendConstraintNoConstraint) {
+  auto model_assets = ModelAssets::Create("test_model_path_1");
+  ASSERT_OK(model_assets);
+  ASSERT_OK_AND_ASSIGN(
+      auto settings,
+      EngineSettings::CreateDefault(*model_assets, /*backend=*/Backend::CPU,
+                                    /*vision_backend=*/Backend::GPU,
+                                    /*audio_backend=*/Backend::GPU));
+  MockTokenizer tokenizer;
+  EXPECT_CALL(tokenizer, TokenIdsToText).WillRepeatedly(Return("fake_text"));
+  EXPECT_CALL(tokenizer, TokenToId).WillRepeatedly(Return(1));
+  EXPECT_CALL(tokenizer, TextToTokenIds)
+      .WillRepeatedly(Return(std::vector<int>{1}));
+  // No audio backend constraint means it's compatible with all backends, so it
+  // should be OK even if the audio models requires a backend.
+  EXPECT_OK(settings.MaybeUpdateAndValidate(tokenizer, nullptr, "",
+                                            /*vision_backend_constraint=*/{},
+                                            /*audio_backend_constraint=*/{}));
+}
+
+TEST(EngineSettingsTest, AudioBackendConstraintMatch) {
+  auto model_assets = ModelAssets::Create("test_model_path_1");
+  ASSERT_OK(model_assets);
+  ASSERT_OK_AND_ASSIGN(
+      auto settings,
+      EngineSettings::CreateDefault(*model_assets, /*backend=*/Backend::CPU,
+                                    /*vision_backend=*/std::nullopt,
+                                    /*audio_backend=*/Backend::CPU));
+  MockTokenizer tokenizer;
+  EXPECT_CALL(tokenizer, TokenIdsToText).WillRepeatedly(Return("fake_text"));
+  EXPECT_CALL(tokenizer, TokenToId).WillRepeatedly(Return(1));
+  EXPECT_CALL(tokenizer, TextToTokenIds)
+      .WillRepeatedly(Return(std::vector<int>{1}));
+
+  // The audio backend constraint matches the audio model backend, so it should
+  // be OK.
+  EXPECT_OK(settings.MaybeUpdateAndValidate(
+      tokenizer, nullptr, "", {}, /*audio_backend_constraint=*/"cpu"));
+}
+
+TEST(EngineSettingsTest, AudioBackendConstraintMatchCaseInsensitive) {
+  auto model_assets = ModelAssets::Create("test_model_path_1");
+  ASSERT_OK(model_assets);
+  ASSERT_OK_AND_ASSIGN(
+      auto settings,
+      EngineSettings::CreateDefault(*model_assets, /*backend=*/Backend::CPU,
+                                    /*vision_backend=*/std::nullopt,
+                                    /*audio_backend=*/Backend::CPU));
+  MockTokenizer tokenizer;
+  EXPECT_CALL(tokenizer, TokenIdsToText).WillRepeatedly(Return("fake_text"));
+  EXPECT_CALL(tokenizer, TokenToId).WillRepeatedly(Return(1));
+  EXPECT_CALL(tokenizer, TextToTokenIds)
+      .WillRepeatedly(Return(std::vector<int>{1}));
+  // The audio backend constraint matches (case insensitive) the audio model
+  // backend, so it should be OK.
+  EXPECT_OK(settings.MaybeUpdateAndValidate(
+      tokenizer, nullptr, "", {}, /*audio_backend_constraint=*/"CPU"));
+}
+
+TEST(EngineSettingsTest, AudioBackendConstraintMultiMatch) {
+  auto model_assets = ModelAssets::Create("test_model_path_1");
+  ASSERT_OK(model_assets);
+  ASSERT_OK_AND_ASSIGN(
+      auto settings,
+      EngineSettings::CreateDefault(*model_assets, /*backend=*/Backend::CPU,
+                                    /*vision_backend=*/std::nullopt,
+                                    /*audio_backend=*/Backend::CPU));
+  MockTokenizer tokenizer;
+  EXPECT_CALL(tokenizer, TokenIdsToText).WillRepeatedly(Return("fake_text"));
+  EXPECT_CALL(tokenizer, TokenToId).WillRepeatedly(Return(1));
+  EXPECT_CALL(tokenizer, TextToTokenIds)
+      .WillRepeatedly(Return(std::vector<int>{1}));
+  // The audio backend constraint matches one of the audio model backends, CPU
+  // in this case, so it should be OK.
+  EXPECT_OK(settings.MaybeUpdateAndValidate(
+      tokenizer, nullptr, "", {}, /*audio_backend_constraint=*/"gpu,cpu"));
+}
+
+TEST(EngineSettingsTest, AudioBackendConstraintNoMatch) {
+  auto model_assets = ModelAssets::Create("test_model_path_1");
+  ASSERT_OK(model_assets);
+  ASSERT_OK_AND_ASSIGN(
+      auto settings,
+      EngineSettings::CreateDefault(*model_assets, /*backend=*/Backend::CPU,
+                                    /*vision_backend=*/std::nullopt,
+                                    /*audio_backend=*/Backend::CPU));
+  MockTokenizer tokenizer;
+  EXPECT_CALL(tokenizer, TokenIdsToText).WillRepeatedly(Return("fake_text"));
+  EXPECT_CALL(tokenizer, TokenToId).WillRepeatedly(Return(1));
+  EXPECT_CALL(tokenizer, TextToTokenIds)
+      .WillRepeatedly(Return(std::vector<int>{1}));
+  // The audio backend constraint does not match the audio model backend, so
+  // it should be an error.
+  EXPECT_THAT(
+      settings.MaybeUpdateAndValidate(tokenizer, nullptr, "", {},
+                                      /*audio_backend_constraint=*/"npu"),
+      StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST(EngineSettingsTest, AudioBackendConstraintMultiNoMatch) {
+  auto model_assets = ModelAssets::Create("test_model_path_1");
+  ASSERT_OK(model_assets);
+  ASSERT_OK_AND_ASSIGN(
+      auto settings,
+      EngineSettings::CreateDefault(*model_assets, /*backend=*/Backend::CPU,
+                                    /*vision_backend=*/std::nullopt,
+                                    /*audio_backend=*/Backend::CPU));
+  MockTokenizer tokenizer;
+  EXPECT_CALL(tokenizer, TokenIdsToText).WillRepeatedly(Return("fake_text"));
+  EXPECT_CALL(tokenizer, TokenToId).WillRepeatedly(Return(1));
+  EXPECT_CALL(tokenizer, TextToTokenIds)
+      .WillRepeatedly(Return(std::vector<int>{1}));
+
+  // The audio backend constraint does not match any of the audio model
+  // backends, so it should be an error.
+  EXPECT_THAT(
+      settings.MaybeUpdateAndValidate(tokenizer, nullptr, "", {},
+                                      /*audio_backend_constraint=*/"gpu,npu"),
+      StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
 TEST(EngineSettingsTest, BenchmarkParams) {
   auto model_assets = ModelAssets::Create("test_model_path_1");
   ASSERT_OK(model_assets);
@@ -242,17 +486,6 @@ TEST(EngineSettingsTest, LlmMetadata) {
   EXPECT_EQ(settings->GetLlmMetadata().value().start_token().token_str(),
             "test_token_str");
 }
-
-class MockTokenizer : public Tokenizer {
- public:
-  MOCK_METHOD(absl::StatusOr<std::string>, TokenIdsToText,
-              (const std::vector<int>& token_ids), (override));
-  MOCK_METHOD(absl::StatusOr<std::vector<int>>, TextToTokenIds,
-              (absl::string_view text), (override));
-  MOCK_METHOD(absl::StatusOr<int>, TokenToId, (absl::string_view token),
-              (override));
-  MOCK_METHOD(TokenizerType, GetTokenizerType, (), (const, override));
-};
 
 absl::Status IsExpectedLlmMetadata(const proto::LlmMetadata& llm_metadata) {
   if (!llm_metadata.has_start_token() ||

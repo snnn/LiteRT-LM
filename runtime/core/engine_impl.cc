@@ -227,7 +227,11 @@ absl::StatusOr<std::unique_ptr<Engine>> Engine::CreateEngine(
   // Update and load the parameters from the model file and convert the
   // tokens to ids.
   RETURN_IF_ERROR(engine_settings.MaybeUpdateAndValidate(
-      *tokenizer, llm_metadata, input_prompt_as_hint));
+      *tokenizer, llm_metadata, input_prompt_as_hint,
+      model_resources->GetTFLiteModelBackendConstraint(
+          ModelType::kTfLiteVisionEncoder),
+      model_resources->GetTFLiteModelBackendConstraint(
+          ModelType::kTfLiteAudioEncoderHw)));
 
   std::unique_ptr<LlmExecutor> executor;
   ASSIGN_OR_RETURN(auto& env,

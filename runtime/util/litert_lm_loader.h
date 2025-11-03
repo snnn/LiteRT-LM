@@ -113,6 +113,19 @@ class LitertLmLoader {
     return litert::BufferRef<uint8_t>();
   };
 
+  // Returns the TFLite model section buffer.
+  std::optional<std::string> GetTFLiteModelBackendConstraint(
+      ModelType model_type) {
+    if (section_backend_constraint_.contains(
+            BufferKey(schema::AnySectionDataType_TFLiteModel, model_type))) {
+      return section_backend_constraint_[BufferKey(
+          schema::AnySectionDataType_TFLiteModel, model_type)];
+    }
+    ABSL_LOG(WARNING) << "TFLite model type: " << ModelTypeToString(model_type)
+                      << " not found for backend constraints. Skipping.";
+    return std::nullopt;
+  };
+
   // Returns the tokenizer section buffer.
   litert::BufferRef<uint8_t> GetLlmMetadata() {
     return section_buffers_[BufferKey(
@@ -129,11 +142,13 @@ class LitertLmLoader {
   ScopedFile model_file_;
   // The model_file_ mapped to a MemoryMappedFile.
   ::std::unique_ptr<MemoryMappedFile> memory_mapped_file_;
-
-  // TODO (b/413793273): Add the extra names to the key to differentiate
-  // between the TFLite models.
+  // Central map of all the section buffers.
   ::std::unordered_map<BufferKey, BufferRef<uint8_t>, BufferKeyHash>
       section_buffers_;
+  // Map of all the sections' metadata, for now, focusing on the backend
+  // constraints
+  ::std::unordered_map<BufferKey, std::string, BufferKeyHash>
+      section_backend_constraint_;
 };
 
 }  // namespace litert::lm

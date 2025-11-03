@@ -31,23 +31,27 @@
 
 namespace litert::lm {
 
-std::ostream& operator<<(std::ostream& os, const Backend& backend) {
+std::string GetBackendString(Backend backend) {
   switch (backend) {
     case Backend::CPU_ARTISAN:
-      return os << "CPU_ARTISAN";
+      return "CPU_ARTISAN";
     case Backend::GPU_ARTISAN:
-      return os << "GPU_ARTISAN";
+      return "GPU_ARTISAN";
     case Backend::GPU:
-      return os << "GPU";
+      return "GPU";
     case Backend::CPU:
-      return os << "CPU";
+      return "CPU";
     case Backend::GOOGLE_TENSOR_ARTISAN:
-      return os << "GOOGLE_TENSOR_ARTISAN";
+      return "GOOGLE_TENSOR_ARTISAN";
     case Backend::NPU:
-      return os << "NPU";
+      return "NPU";
     default:
-      return os << "UNSPECIFIED";
+      return "UNSPECIFIED";
   }
+}
+
+std::ostream& operator<<(std::ostream& os, const Backend& backend) {
+  return os << GetBackendString(backend);
 }
 
 absl::StatusOr<Backend> GetBackendFromString(absl::string_view backend_str) {

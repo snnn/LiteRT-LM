@@ -53,6 +53,8 @@ enum class Backend {
 std::ostream& operator<<(std::ostream& os, const Backend& backend);
 // Returns the backend enum from the string. Case-insensitive.
 absl::StatusOr<Backend> GetBackendFromString(absl::string_view backend_str);
+// Returns the string representation of the backend enum.
+std::string GetBackendString(Backend backend);
 
 enum class ActivationDataType {
   // Use float32 as the activation data type.

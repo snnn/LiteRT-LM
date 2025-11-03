@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -68,6 +69,11 @@ absl::StatusOr<const litert::Model*> ModelResourcesLitertLm::GetTFLiteModel(
   LITERT_ASSIGN_OR_RETURN(auto model, Model::CreateFromBuffer(buffer_ref));
   model_map_[model_type] = std::make_unique<litert::Model>(std::move(model));
   return model_map_[model_type].get();
+}
+
+std::optional<std::string>
+ModelResourcesLitertLm::GetTFLiteModelBackendConstraint(ModelType model_type) {
+  return litert_lm_loader_->GetTFLiteModelBackendConstraint(model_type);
 }
 
 absl::StatusOr<absl::string_view> ModelResourcesLitertLm::GetTFLiteModelBuffer(

@@ -753,6 +753,6 @@ cc_test(
         "//runtime/components:model_resources",
         "//runtime/components:tokenizer",
         "//runtime/util:litert_status_util",
-        "//runtime/util:test_utils",
+        "//runtime/util:test_utils",  # buildcleaner: keep
     ],
 )

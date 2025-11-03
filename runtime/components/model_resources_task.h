@@ -16,6 +16,8 @@
 #define THIRD_PARTY_ODML_LITERT_LM_RUNTIME_COMPONENTS_MODEL_RESOURCES_TASK_H_
 
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"  // from @com_google_absl
@@ -40,6 +42,11 @@ class ModelResourcesTask : public ModelResources {
       ModelType model_type) override;
   absl::StatusOr<absl::string_view> GetTFLiteModelBuffer(
       ModelType model_type) override;
+  std::optional<std::string> GetTFLiteModelBackendConstraint(
+      ModelType model_type) override {
+    // Task model does not support backend constraint.
+    return std::nullopt;
+  };
   absl::StatusOr<Tokenizer*> GetTokenizer() override;
   absl::StatusOr<const proto::LlmMetadata*> GetLlmMetadata() override;
 

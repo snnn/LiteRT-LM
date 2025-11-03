@@ -17,6 +17,7 @@
 
 // All the loaded model resources the executor needs to hold to avoid the model
 // being destroyed.
+#include <optional>
 #include <string>
 
 #include "absl/status/status.h"  // from @com_google_absl
@@ -137,6 +138,11 @@ class ModelResources {
   // Prefer to use GetTFLiteModel() if possible, as this function will leave
   // the model lifecycle management to the caller.
   virtual absl::StatusOr<absl::string_view> GetTFLiteModelBuffer(
+      ModelType model_type) = 0;
+
+  // Returns the TFLite model backend constraint. When there is no constraint
+  // for the given model type, it will return an nullopt.
+  virtual std::optional<std::string> GetTFLiteModelBackendConstraint(
       ModelType model_type) = 0;
 
   // Returns the tokenizer.

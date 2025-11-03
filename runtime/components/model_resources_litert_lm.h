@@ -16,6 +16,8 @@
 #define THIRD_PARTY_ODML_LITERT_LM_RUNTIME_COMPONENTS_MODEL_RESOURCES_LITERT_LM_H_
 
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
 
 #include "absl/container/flat_hash_map.h"  // from @com_google_absl
@@ -41,6 +43,8 @@ class ModelResourcesLitertLm : public ModelResources {
   absl::StatusOr<absl::string_view> GetTFLiteModelBuffer(
       ModelType model_type) override;
 
+  std::optional<std::string> GetTFLiteModelBackendConstraint(
+      ModelType model_type) override;
   // Returns the tokenizer from the *.litertlm file. If both SentencePiece and
   // HuggingFace tokenizer are present and supported by the current build
   // configuration, the SentencePiece tokenizer will be used.

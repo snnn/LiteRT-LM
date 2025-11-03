@@ -14,6 +14,7 @@
 
 #include "runtime/engine/engine_settings.h"
 
+#include <algorithm>
 #include <optional>
 #include <ostream>
 #include <string>
@@ -24,7 +25,9 @@
 #include "absl/log/absl_log.h"  // from @com_google_absl
 #include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/statusor.h"  // from @com_google_absl
+#include "absl/strings/match.h"  // from @com_google_absl
 #include "absl/strings/str_cat.h"  // from @com_google_absl
+#include "absl/strings/str_split.h"  // from @com_google_absl
 #include "absl/strings/string_view.h"  // from @com_google_absl
 #include "runtime/components/tokenizer.h"
 #include "runtime/executor/audio_executor_settings.h"
@@ -61,6 +64,46 @@ std::ostream& operator<<(std::ostream& os, const std::vector<int>& vec) {
   return os;
 }
 
+// TODO(b/455715016): Simplify this function by setting up the proper
+// inheritance of the executor settings. The Backend Getter should be part of
+// the base class.
+template <typename T>
+absl::Status ValidateBackendConstraint(
+    const std::optional<T>& executor_settings,
+    const std::optional<std::string>& backend_constraint,
+    absl::string_view modality_name) {
+  if (executor_settings.has_value() && backend_constraint.has_value()) {
+    // When both the executor settings and the backend constraint are set, we
+    // check if the backend constraint contains the backend of the executor
+    // settings.
+    std::string backend_constraint_str = backend_constraint.value();
+    std::string backend = GetBackendString(executor_settings->GetBackend());
+    std::vector<std::string> constraints =
+        absl::StrSplit(backend_constraint_str, ',');
+    bool found =
+        std::any_of(constraints.begin(), constraints.end(),
+                    [&](absl::string_view constraint) {
+                      return absl::EqualsIgnoreCase(constraint, backend);
+                    });
+    if (!found) {
+      return absl::InvalidArgumentError(
+          absl::StrCat(modality_name,
+                       " backend constraint mismatch. Model requires one of [",
+                       backend_constraint_str, "] but ", modality_name,
+                       " backend is ", backend));
+    }
+    ABSL_LOG(INFO) << "The " << modality_name
+                   << " backend constraint is matched: " << backend;
+  } else if (executor_settings.has_value()) {
+    ABSL_LOG(INFO) << "The " << modality_name
+                   << " backend constraint is not set.";
+  } else {
+    ABSL_LOG(INFO) << "The " << modality_name
+                   << " executor_settings is not set.";
+  }
+  return absl::OkStatus();
+}
+
 }  // namespace
 
 // static
@@ -92,7 +135,9 @@ absl::StatusOr<EngineSettings> EngineSettings::CreateDefault(
 absl::Status EngineSettings::MaybeUpdateAndValidate(
     Tokenizer& tokenizer,
     const proto::LlmMetadata* absl_nullable metadata_from_file,
-    absl::string_view input_prompt_as_hint) {
+    absl::string_view input_prompt_as_hint,
+    const std::optional<std::string>& vision_backend_constraint,
+    const std::optional<std::string>& audio_backend_constraint) {
   proto::LlmMetadata& metadata = GetMutableLlmMetadata();
   // Copy the metadata from the file if it is provided.
   if (metadata_from_file != nullptr) {
@@ -193,6 +238,13 @@ absl::Status EngineSettings::MaybeUpdateAndValidate(
                      GetDefaultJinjaPromptTemplate(metadata.prompt_templates(),
                                                    metadata.llm_model_type()));
   }
+
+  // If the vision executor settings is set, then check if the vision backend
+  // constraint is compatible.
+  RETURN_IF_ERROR(ValidateBackendConstraint<LlmExecutorSettings>(
+      vision_executor_settings_, vision_backend_constraint, "Vision"));
+  RETURN_IF_ERROR(ValidateBackendConstraint<AudioExecutorSettings>(
+      audio_executor_settings_, audio_backend_constraint, "Audio"));
 
   ABSL_LOG(INFO) << "The llm metadata: " << metadata.DebugString();
   ABSL_LOG(INFO) << "The validated engine settings: " << *this;

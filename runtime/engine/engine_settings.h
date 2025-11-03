@@ -82,7 +82,11 @@ class EngineSettings {
   absl::Status MaybeUpdateAndValidate(
       Tokenizer& tokenizer,
       const proto::LlmMetadata* absl_nullable metadata_from_file,
-      absl::string_view input_prompt_as_hint = "");
+      absl::string_view input_prompt_as_hint = "",
+      const std::optional<std::string>& vision_backend_constraint =
+          std::nullopt,
+      const std::optional<std::string>& audio_backend_constraint =
+          std::nullopt);
 
   // Returns the LlmExecutorSettings.
   const LlmExecutorSettings& GetMainExecutorSettings() const;

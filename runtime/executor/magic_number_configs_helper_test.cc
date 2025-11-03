@@ -15,6 +15,7 @@
 #include "runtime/executor/magic_number_configs_helper.h"
 
 #include <filesystem>  // NOLINT: Required for path manipulation.
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -29,7 +30,7 @@
 #include "runtime/executor/executor_settings_base.h"
 #include "runtime/executor/llm_executor_settings.h"
 #include "runtime/util/status_macros.h"  // IWYU pragma: keep
-#include "runtime/util/test_utils.h"  // NOLINT
+#include "runtime/util/test_utils.h"     // NOLINT
 
 namespace litert::lm {
 namespace {
@@ -90,6 +91,8 @@ class ModelResourcesMock : public ModelResources {
               (override));
   MOCK_METHOD(absl::StatusOr<Tokenizer*>, GetTokenizer, (), (override));
   MOCK_METHOD(absl::StatusOr<absl::string_view>, GetTFLiteModelBuffer,
+              (ModelType model_type), (override));
+  MOCK_METHOD(std::optional<std::string>, GetTFLiteModelBackendConstraint,
               (ModelType model_type), (override));
   absl::StatusOr<const litert::Model*> GetTFLiteModel(
       ModelType model_type) override {

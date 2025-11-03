@@ -80,6 +80,7 @@ absl::Status LitertLmLoader::MapSections() {
     if (section->data_type() == schema::AnySectionDataType_TFLiteModel) {
       bool found_model_type = false;
       std::string model_type;
+      std::string backend_constraint;
       for (size_t j = 0; j < items->size(); ++j) {
         auto item = items->Get(j);
         if (item->key() &&
@@ -87,7 +88,11 @@ absl::Status LitertLmLoader::MapSections() {
             item->value()) {
           found_model_type = true;
           model_type = *(item->value_as_StringValue()->value());
-          break;
+        }
+        if (item->key() &&
+            absl::AsciiStrToLower(item->key()->str()) == "backend_constraint" &&
+            item->value()) {
+          backend_constraint = *(item->value_as_StringValue()->value());
         }
       }
       if (found_model_type) {
@@ -101,10 +106,15 @@ absl::Status LitertLmLoader::MapSections() {
         buffer_key =
             BufferKey(section->data_type(), ModelType::kTfLitePrefillDecode);
       }
+      if (!backend_constraint.empty()) {
+        section_backend_constraint_[buffer_key] = backend_constraint;
+        ABSL_LOG(INFO) << "section_backend_constraint: " << backend_constraint;
+      }
     }
     section_buffers_[buffer_key] =
         BufferRef<uint8_t>(static_cast<uint8_t*>(memory_mapped_file_->data()),
                            section->end_offset(), section->begin_offset());
+
     ABSL_LOG(INFO) << "section_index: " << i;
     ABSL_LOG(INFO) << "section_data_type: "
                    << EnumNameAnySectionDataType(section->data_type());
