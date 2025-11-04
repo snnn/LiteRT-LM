@@ -20,6 +20,7 @@
 
 #include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/statusor.h"  // from @com_google_absl
+#include "absl/strings/str_cat.h"  // from @com_google_absl
 #include "absl/strings/string_view.h"  // from @com_google_absl
 #include "runtime/util/scoped_file.h"
 #include "runtime/util/status_macros.h"
@@ -29,7 +30,9 @@ namespace litert::lm {
 // static
 absl::StatusOr<ScopedFile> ScopedFile::Open(absl::string_view path) {
   int fd = open(path.data(), O_RDONLY);
-  RET_CHECK_GE(fd, 0) << "open() failed: " << path;
+  if (fd < 0) {
+    return absl::ErrnoToStatus(errno, absl::StrCat("open() failed: ", path));
+  }
   return ScopedFile(fd);
 }
 
