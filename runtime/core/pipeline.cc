@@ -162,7 +162,7 @@ class DecodeOneStep {
           pending_stop_tokens_[i].push(decoded_result.value()[i].value());
         }
         // We only need the latest max_length tokens for partial stop tokens.
-        // Add the extra ones to the result text tand we could keep only the
+        // Add the extra ones to the result text and we could keep only the
         // latest max_length stop tokens in the queue.
         while (pending_stop_tokens_[i].size() > max_length) {
           result_text_[i] += pending_stop_tokens_[i].front();
