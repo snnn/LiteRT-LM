@@ -33,6 +33,7 @@
 #include "runtime/util/memory_mapped_file.h"
 #include "runtime/util/scoped_file.h"
 #include "schema/core/litertlm_header_schema_generated.h"
+#include "schema/core/litertlm_read.h"
 
 namespace litert::lm {
 
@@ -90,11 +91,7 @@ class LitertLmLoader {
   // Returns the tokenizer section buffer for the SentencePiece tokenizer.
   // If not found, returns std::nullopt.
   std::optional<litert::BufferRef<uint8_t>> GetSentencePieceTokenizer() {
-    auto section_key = BufferKey(schema::AnySectionDataType_SP_Tokenizer);
-    if (!section_buffers_.contains(section_key)) {
-      return std::nullopt;
-    }
-    return section_buffers_[section_key];
+    return GetSectionBuffer(BufferKey(schema::AnySectionDataType_SP_Tokenizer));
   }
 
   // Returns the tokenizer section buffer for the HuggingFace tokenizer.
@@ -103,10 +100,10 @@ class LitertLmLoader {
 
   // Returns the TFLite model section buffer.
   litert::BufferRef<uint8_t> GetTFLiteModel(ModelType model_type) {
-    if (section_buffers_.contains(
-            BufferKey(schema::AnySectionDataType_TFLiteModel, model_type))) {
-      return section_buffers_[BufferKey(schema::AnySectionDataType_TFLiteModel,
-                                        model_type)];
+    auto optional_section_buffer = GetSectionBuffer(
+        BufferKey(schema::AnySectionDataType_TFLiteModel, model_type));
+    if (optional_section_buffer.has_value()) {
+      return optional_section_buffer.value();
     }
     ABSL_LOG(WARNING) << "TFLite model type: " << ModelTypeToString(model_type)
                       << " not found. Skipping.";
@@ -128,8 +125,9 @@ class LitertLmLoader {
 
   // Returns the tokenizer section buffer.
   litert::BufferRef<uint8_t> GetLlmMetadata() {
-    return section_buffers_[BufferKey(
-        schema::AnySectionDataType_LlmMetadataProto)];
+    return GetSectionBuffer(
+               BufferKey(schema::AnySectionDataType_LlmMetadataProto))
+        .value();
   }
 
  private:
@@ -138,13 +136,32 @@ class LitertLmLoader {
   absl::Status Initialize();
   // Maps the sections to the section buffers.
   absl::Status MapSections();
+  // Maps the section to the section buffer.
+  absl::Status MapSection(BufferKey buffer_key, uint64_t begin_offset,
+                          uint64_t end_offset);
+  // Returns the section buffer for the given buffer key.
+  // If not found, returns std::nullopt.
+  std::optional<litert::BufferRef<uint8_t>> GetSectionBuffer(
+      BufferKey buffer_key);
+
   // The model file to be loaded.
   ScopedFile model_file_;
+
   // The model_file_ mapped to a MemoryMappedFile.
-  ::std::unique_ptr<MemoryMappedFile> memory_mapped_file_;
-  // Central map of all the section buffers.
-  ::std::unordered_map<BufferKey, BufferRef<uint8_t>, BufferKeyHash>
+  ::std::unique_ptr<MemoryMappedFile> header_memory_mapped_file_;
+
+  // The section memory mapped files - stored here to ensure they are not
+  // unmapped while in use. On Windows, these MemoryMappedFiles may contain more
+  // than the current section's data because Windows has a data alignment of
+  // 64KB but the LiteRT LM file has a 16KB alignment.
+  ::std::unordered_map<BufferKey, std::unique_ptr<MemoryMappedFile>,
+                       BufferKeyHash>
+      section_memory_mapped_files_;
+  // The section buffers. Unlike the section_memory_mapped_files_, these
+  // buffers point to only the data of the each section, even on Windows.
+  ::std::unordered_map<BufferKey, litert::BufferRef<uint8_t>, BufferKeyHash>
       section_buffers_;
+
   // Map of all the sections' metadata, for now, focusing on the backend
   // constraints
   ::std::unordered_map<BufferKey, std::string, BufferKeyHash>

@@ -420,6 +420,7 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "@litert//litert/cc:litert_buffer_ref",
         "//runtime/components:model_resources",
+        "//runtime/util:litert_status_util",
         "//schema/core:litertlm_header_schema",
         "//schema/core:litertlm_read",
     ],

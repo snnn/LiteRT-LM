@@ -34,6 +34,7 @@
 #include "runtime/components/model_resources.h"
 #include "runtime/util/memory_mapped_file.h"
 #include "runtime/util/scoped_file.h"
+#include "runtime/util/status_macros.h"
 #include "schema/core/litertlm_header_schema_generated.h"
 #include "schema/core/litertlm_read.h"
 
@@ -42,25 +43,56 @@ namespace litert::lm {
 namespace {
 // Utility function to Creates a memory-mapped file from a ScopedFile.
 absl::StatusOr<std::unique_ptr<MemoryMappedFile>> CreateMemoryMapFromScopedFile(
-    litert::lm::ScopedFile& scoped_file) {
+    litert::lm::ScopedFile& scoped_file, uint64_t offset = 0,
+    uint64_t size = 0) {
   if (!scoped_file.IsValid()) {
     return absl::InvalidArgumentError("Invalid ScopedFile provided.");
   }
   litert::lm::ScopedFile::PlatformFile platform_file = scoped_file.file();
   // For a read-only memory-mapped file:
-  return litert::lm::MemoryMappedFile::Create(platform_file, 0, 0, "whole");
+  // TODO - b/454926463: Add support for different keys for more optimal loading
+  // on Windows.
+  return litert::lm::MemoryMappedFile::Create(platform_file, offset, size,
+                                              "whole");
 }
 
 constexpr uint64_t kLitertLmHeaderMaxSize = 16 * 1024;
 
 }  // namespace
 
+absl::Status LitertLmLoader::MapSection(BufferKey buffer_key,
+                                        uint64_t begin_offset,
+                                        uint64_t end_offset) {
+  // If the begin offset is not aligned to the required platform alignment, we
+  // need to map the section starting a bit earlier so that the data is aligned.
+  size_t alignment = MemoryMappedFile::GetOffsetAlignment();
+  uint64_t alignment_gap = begin_offset % alignment;
+  uint64_t aligned_begin_offset = begin_offset - alignment_gap;
+
+  uint64_t aligned_section_size = end_offset - aligned_begin_offset;
+  ASSIGN_OR_RETURN(
+      section_memory_mapped_files_[buffer_key],
+      CreateMemoryMapFromScopedFile(model_file_, aligned_begin_offset,
+                                    aligned_section_size));
+  auto& memory_mapped_file = section_memory_mapped_files_[buffer_key];
+
+  // The section buffer that is stored should point to the section data only,
+  // not include the alignment gap.
+  uint8_t* data =
+      static_cast<uint8_t*>(memory_mapped_file->data()) + alignment_gap;
+  uint64_t section_size = end_offset - begin_offset;
+  section_buffers_[buffer_key] = BufferRef<uint8_t>(data, section_size);
+
+  return absl::OkStatus();
+}
+
 absl::Status LitertLmLoader::MapSections() {
-  schema::LitertlmHeader header;
   // Read the header information.
+  schema::LitertlmHeader header;
   absl::Status status = ReadHeaderFromLiteRTLM(
-      memory_mapped_file_->data(),
-      std::min(kLitertLmHeaderMaxSize, memory_mapped_file_->length()), &header);
+      header_memory_mapped_file_->data(),
+      std::min(kLitertLmHeaderMaxSize, header_memory_mapped_file_->length()),
+      &header);
   ABSL_LOG(INFO) << "status: " << status;
   ABSL_LOG(INFO) << "major_version: " << header.major_version;
   ABSL_LOG(INFO) << "minor_version: " << header.minor_version;
@@ -111,9 +143,11 @@ absl::Status LitertLmLoader::MapSections() {
         ABSL_LOG(INFO) << "section_backend_constraint: " << backend_constraint;
       }
     }
-    section_buffers_[buffer_key] =
-        BufferRef<uint8_t>(static_cast<uint8_t*>(memory_mapped_file_->data()),
-                           section->end_offset(), section->begin_offset());
+    section_buffers_[buffer_key] = BufferRef<uint8_t>(
+        static_cast<uint8_t*>(header_memory_mapped_file_->data()),
+        section->end_offset(), section->begin_offset());
+    RETURN_IF_ERROR(
+        MapSection(buffer_key, section->begin_offset(), section->end_offset()));
 
     ABSL_LOG(INFO) << "section_index: " << i;
     ABSL_LOG(INFO) << "section_data_type: "
@@ -129,28 +163,35 @@ absl::Status LitertLmLoader::Initialize() {
 
   absl::StatusOr<std::unique_ptr<MemoryMappedFile>> mmap_status =
       CreateMemoryMapFromScopedFile(model_file_);
-
-  if (mmap_status.ok()) {
-    memory_mapped_file_ = std::move(mmap_status).value();
-    ABSL_LOG(INFO) << "mmap_status is ok";
-    ABSL_LOG(INFO) << "length: " << memory_mapped_file_->length();
-  } else {
-    ABSL_LOG(ERROR) << "Failed to create memory-mapped file: "
-                    << mmap_status.status();
+  if (!mmap_status.ok()) {
+    return mmap_status.status();
   }
+  header_memory_mapped_file_ = std::move(mmap_status.value());
+  ABSL_LOG(INFO) << "mmap_status is ok";
+  ABSL_LOG(INFO) << "length: " << header_memory_mapped_file_->length();
 
   ABSL_CHECK_OK(MapSections());
 
   return absl::OkStatus();
 }
 
-std::optional<litert::OwningBufferRef<uint8_t>>
-LitertLmLoader::GetHuggingFaceTokenizer() {
-  auto section_key = BufferKey(schema::AnySectionDataType_HF_Tokenizer_Zlib);
-  if (!section_buffers_.contains(section_key)) {
+std::optional<litert::BufferRef<uint8_t>> LitertLmLoader::GetSectionBuffer(
+    BufferKey buffer_key) {
+  auto section_buffer_it = section_buffers_.find(buffer_key);
+  if (section_buffer_it == section_buffers_.end()) {
     return std::nullopt;
   }
-  const auto& section = section_buffers_[section_key];
+  return section_buffer_it->second;
+}
+
+std::optional<litert::OwningBufferRef<uint8_t>>
+LitertLmLoader::GetHuggingFaceTokenizer() {
+  auto optional_section_buffer =
+      GetSectionBuffer(BufferKey(schema::AnySectionDataType_HF_Tokenizer_Zlib));
+  if (!optional_section_buffer.has_value()) {
+    return std::nullopt;
+  }
+  const auto& section = optional_section_buffer.value();
 
   std::vector<uint8_t> hf_tokenizer_data;
   auto status = schema::DecompressData(section.Data(), section.Size(),
