@@ -35,6 +35,7 @@
 #include "litert/cc/litert_layout.h"  // from @litert
 #include "litert/cc/litert_macros.h"  // from @litert
 #include "litert/cc/litert_model.h"  // from @litert
+#include "litert/cc/litert_ranked_tensor_type.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer_types.h"  // from @litert
 #include "litert/test/matchers.h"  // from @litert
@@ -85,7 +86,7 @@ class EmbeddingLookupManagerTest : public ::testing::Test {
 
   absl::Status UpdateMultiModalEmbeddings() {
     // 2 vision embedding columns, each with 128 elements.
-    static struct alignas(LITERT_HOST_MEMORY_BUFFER_ALIGNMENT) {
+    static struct alignas(::litert::kHostMemoryBufferAlignment) {
       float d[256] = {
           1.0,   2.0,   3.0,   4.0,   5.0,   6.0,   7.0,   8.0,   9.0,   10.0,
           11.0,  12.0,  13.0,  14.0,  15.0,  16.0,  17.0,  18.0,  19.0,  20.0,
@@ -116,7 +117,7 @@ class EmbeddingLookupManagerTest : public ::testing::Test {
     } vision_data;
 
     // 2 audio embedding columns, each with 128 elements.
-    static struct alignas(LITERT_HOST_MEMORY_BUFFER_ALIGNMENT) {
+    static struct alignas(::litert::kHostMemoryBufferAlignment) {
       float d[256] = {
           257.0, 258.0, 259.0, 260.0, 261.0, 262.0, 263.0, 264.0, 265.0, 266.0,
           267.0, 268.0, 269.0, 270.0, 271.0, 272.0, 273.0, 274.0, 275.0, 276.0,

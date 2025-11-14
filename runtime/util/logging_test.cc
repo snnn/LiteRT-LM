@@ -23,8 +23,10 @@
 
 #include <gtest/gtest.h>
 #include "litert/cc/litert_element_type.h"  // from @litert
-#include "litert/cc/litert_model.h"  // from @litert
+#include "litert/cc/litert_layout.h"  // from @litert
+#include "litert/cc/litert_ranked_tensor_type.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer.h"  // from @litert
+#include "litert/cc/litert_tensor_buffer_types.h"  // from @litert
 #include "runtime/util/logging_tensor_buffer.h"
 
 namespace litert::lm {
@@ -69,7 +71,7 @@ TEST(LoggingTest, LogTensorBuffer_None) {
 }
 
 TEST(LoggingTest, LogTensorBuffer_Vector) {
-  struct alignas(LITERT_HOST_MEMORY_BUFFER_ALIGNMENT) {
+  struct alignas(::litert::kHostMemoryBufferAlignment) {
     int d[5] = {1, 2, -3, 4, 5};
   } data;
 
@@ -85,7 +87,7 @@ TEST(LoggingTest, LogTensorBuffer_Vector) {
 }
 
 TEST(LoggingTest, LogTensorBuffer_Vector_Int8) {
-  struct alignas(LITERT_HOST_MEMORY_BUFFER_ALIGNMENT) {
+  struct alignas(::litert::kHostMemoryBufferAlignment) {
     int8_t d[5] = {1, 2, -3, 4, 5};
   } data;
 
@@ -101,7 +103,7 @@ TEST(LoggingTest, LogTensorBuffer_Vector_Int8) {
 }
 
 TEST(LoggingTest, LogTensorBuffer_Vector_Int16) {
-  struct alignas(LITERT_HOST_MEMORY_BUFFER_ALIGNMENT) {
+  struct alignas(::litert::kHostMemoryBufferAlignment) {
     int16_t d[5] = {1, 2, -3, 4, 5};
   } data;
 
@@ -117,7 +119,7 @@ TEST(LoggingTest, LogTensorBuffer_Vector_Int16) {
 }
 
 TEST(LoggingTest, LogTensorBuffer_Vector_Float) {
-  struct alignas(LITERT_HOST_MEMORY_BUFFER_ALIGNMENT) {
+  struct alignas(::litert::kHostMemoryBufferAlignment) {
     float d[5] = {1.1, 2.2, -3.3, 4.4, 5.5};
   } data;
 
@@ -133,7 +135,7 @@ TEST(LoggingTest, LogTensorBuffer_Vector_Float) {
 }
 
 TEST(LoggingTest, LogTensorBuffer_Matrix) {
-  struct alignas(LITERT_HOST_MEMORY_BUFFER_ALIGNMENT) {
+  struct alignas(::litert::kHostMemoryBufferAlignment) {
     int d[12] = {1, 2, -3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
   } data;
 
@@ -152,7 +154,7 @@ TEST(LoggingTest, LogTensorBuffer_Matrix) {
 }
 
 TEST(LoggingTest, LogTensorBuffer_Tensor) {
-  struct alignas(LITERT_HOST_MEMORY_BUFFER_ALIGNMENT) {
+  struct alignas(::litert::kHostMemoryBufferAlignment) {
     float d[12] = {1.1, 2.2, -3.3, 4.4,   5.5,   6.6,
                    7.7, 8.8, 9.9,  10.10, 11.11, 12.12};
   } data;

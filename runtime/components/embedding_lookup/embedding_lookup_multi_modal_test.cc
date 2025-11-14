@@ -30,7 +30,7 @@
 #include "litert/cc/litert_expected.h"  // from @litert
 #include "litert/cc/litert_layout.h"  // from @litert
 #include "litert/cc/litert_macros.h"  // from @litert
-#include "litert/cc/litert_model.h"  // from @litert
+#include "litert/cc/litert_ranked_tensor_type.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer_types.h"  // from @litert
 #include "litert/test/matchers.h"  // from @litert
@@ -40,7 +40,7 @@ namespace litert::lm {
 class EmbeddingLookupMultiModalTest : public testing::Test {
  protected:
   std::unique_ptr<EmbeddingLookupMultiModal> GetEmbeddingLookupMultiModal() {
-    static struct alignas(LITERT_HOST_MEMORY_BUFFER_ALIGNMENT) {
+    static struct alignas(::litert::kHostMemoryBufferAlignment) {
       float d[24] = {1.0,  2.0,  3.0,  4.0,  5.0,  6.0,  7.0,  8.0,
                      9.0,  10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
                      17.0, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0};

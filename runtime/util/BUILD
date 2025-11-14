@@ -94,17 +94,18 @@ cc_test(
         ":convert_tensor_buffer",
         ":executor_data_util",
         ":tensor_buffer_util",
+        ":test_utils",
         "@com_google_googletest//:gtest_main",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",
         "@litert//litert/cc:litert_element_type",
+        "@litert//litert/cc:litert_environment",
         "@litert//litert/cc:litert_layout",
         "@litert//litert/cc:litert_ranked_tensor_type",
         "@litert//litert/cc:litert_tensor_buffer",
         "@litert//litert/cc:litert_tensor_buffer_types",
         "@litert//litert/test:matchers",
         "//runtime/executor:llm_executor_io_types",
-        "//runtime/util:test_utils",
     ],
 )
 
@@ -225,8 +226,12 @@ cc_test(
         ":logging_tensor_buffer",
         "@com_google_googletest//:gtest_main",
         "@litert//litert/cc:litert_element_type",
-        "@litert//litert/cc:litert_model",
+        "@litert//litert/cc:litert_environment",
+        "@litert//litert/cc:litert_layout",
+        "@litert//litert/cc:litert_ranked_tensor_type",
         "@litert//litert/cc:litert_tensor_buffer",
+        "@litert//litert/cc:litert_tensor_buffer_types",
+        "@litert//litert/test:matchers",
     ],
 )
 
