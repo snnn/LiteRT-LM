@@ -149,6 +149,7 @@ absl::Status FakeLlmExecutor::Prefill(const ExecutorInputs& inputs) {
   RETURN_IF_ERROR(
       CheckEquivalent(absl::MakeSpan(prefill_tokens_set_[prefill_times_]),
                       *text_token_ids_span));
+  last_op_ = LastOp::kPrefill;
   prefill_times_++;
   current_step_ += text_token_ids_span->size();
   return absl::OkStatus();
@@ -189,17 +190,34 @@ absl::Status FakeLlmExecutor::Decode(
     LITERT_ASSIGN_OR_RETURN(auto last_token_ids,
                             CreateTensorBuffer<int>({batch_size_, 1}));
     auto last_token_ids_span = ReferTensorBufferAsSpan<int>(last_token_ids);
-    if (decode_times_ == 0) {
-      const auto& last_prefill_tokens = prefill_tokens_set_.back();
-      int seq_len = last_prefill_tokens.size() / batch_size_;
-      for (int i = 0; i < batch_size_; ++i) {
-        (*last_token_ids_span)[i] =
-            last_prefill_tokens[i * seq_len + seq_len - 1];
+
+    switch (last_op_) {
+      case LastOp::kNone:
+        return absl::FailedPreconditionError(
+            "Constraint decoding called without prior prefill or decode.");
+      case LastOp::kPrefill: {
+        if (prefill_times_ == 0) {
+          return absl::InternalError(
+              "LastOp is Prefill but prefill_times_ is 0");
+        }
+        const auto& last_prefill_tokens =
+            prefill_tokens_set_[prefill_times_ - 1];
+        int seq_len = last_prefill_tokens.size() / batch_size_;
+        for (int i = 0; i < batch_size_; ++i) {
+          (*last_token_ids_span)[i] =
+              last_prefill_tokens[i * seq_len + seq_len - 1];
+        }
+        break;
       }
-    } else {
-      const auto& last_decode_tokens = decode_tokens_set_[decode_times_ - 1];
-      for (int i = 0; i < batch_size_; ++i) {
-        (*last_token_ids_span)[i] = last_decode_tokens[i];
+      case LastOp::kDecode: {
+        if (decode_times_ == 0) {
+          return absl::InternalError("LastOp is Decode but decode_times_ is 0");
+        }
+        const auto& last_decode_tokens = decode_tokens_set_[decode_times_ - 1];
+        for (int i = 0; i < batch_size_; ++i) {
+          (*last_token_ids_span)[i] = last_decode_tokens[i];
+        }
+        break;
       }
     }
     // Update the constraint state with the last token ids.
@@ -219,6 +237,7 @@ absl::Status FakeLlmExecutor::Decode(
       (*tokens_span)[i] = decode_tokens_set_[decode_times_][i];
     }
   }
+  last_op_ = LastOp::kDecode;
   decode_times_++;
   current_step_++;
   return absl::OkStatus();
@@ -243,6 +262,7 @@ absl::Status FakeLlmExecutor::Decode(const ExecutorInputs& inputs,
   }
   DecodeIdsToLogits(decode_tokens_set_[decode_times_], vocab_size_,
                     output_logits);
+  last_op_ = LastOp::kDecode;
   decode_times_++;
   current_step_++;
   return absl::OkStatus();
@@ -270,6 +290,7 @@ absl::StatusOr<::litert::TensorBuffer> FakeLlmExecutor::DecodeLogits(
       CreateTensorBuffer<float>({batch_size_, 1, vocab_size_}));
   DecodeIdsToLogits(decode_tokens_set_[decode_times_], vocab_size_,
                     output_logits);
+  last_op_ = LastOp::kDecode;
   decode_times_++;
   current_step_++;
   return std::move(output_logits);
@@ -286,6 +307,7 @@ absl::Status FakeLlmExecutor::Reset() {
   prefill_times_ = 0;
   decode_times_ = 0;
   current_step_ = 0;
+  last_op_ = LastOp::kNone;
   return absl::OkStatus();
 }
 

@@ -253,6 +253,17 @@ TEST_F(PipelineTest, DecodeWithConstrainedDecoding) {
       /*vocab_size=*/2560, prefill_tokens, decode_tokens, /*batch_size=*/1);
 
   std::optional<BenchmarkInfo> benchmark_info;
+
+  // Run prefill with <bos> token.
+  std::vector<int> prefill_token_ids = {2};
+  ASSERT_OK_AND_ASSIGN(auto token_ids_buffer,
+                       tokenizer_->TokenIdsToTensorBuffer(prefill_token_ids));
+  ExecutorTextData text_data(std::move(token_ids_buffer));
+  ExecutorInputs inputs(std::move(text_data), std::nullopt, std::nullopt);
+  auto prefill_responses =
+      Prefill(*executor, inputs, /*wait_for_completion=*/true, benchmark_info);
+  EXPECT_OK(prefill_responses);
+
   constexpr int kNumOutputCandidates = 1;
   StopTokenDetector stop_token_detector(kNumOutputCandidates);
   EXPECT_OK(stop_token_detector.AddStopTokenSequence({0}));
@@ -321,6 +332,17 @@ TEST_F(PipelineTest, DecodeStreamingWithConstrainedDecoding) {
       /*vocab_size=*/2560, prefill_tokens, decode_tokens, /*batch_size=*/1);
 
   std::optional<BenchmarkInfo> benchmark_info;
+
+  // Run prefill with <bos> token.
+  std::vector<int> prefill_token_ids = {2};
+  ASSERT_OK_AND_ASSIGN(auto token_ids_buffer,
+                       tokenizer_->TokenIdsToTensorBuffer(prefill_token_ids));
+  ExecutorTextData text_data(std::move(token_ids_buffer));
+  ExecutorInputs inputs(std::move(text_data), std::nullopt, std::nullopt);
+  auto prefill_responses =
+      Prefill(*executor, inputs, /*wait_for_completion=*/true, benchmark_info);
+  EXPECT_OK(prefill_responses);
+
   constexpr int kNumOutputCandidates = 1;
   StopTokenDetector stop_token_detector(kNumOutputCandidates);
   EXPECT_OK(stop_token_detector.AddStopTokenSequence({0}));

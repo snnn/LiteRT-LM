@@ -129,6 +129,13 @@ class FakeLlmExecutor : public LlmExecutor {
   // The delay before decoding. Useful for testing the cancellation logic.
   // The default value is 0, which means no delay.
   absl::Duration decode_delay_;
+
+  enum class LastOp {
+    kNone,
+    kPrefill,
+    kDecode,
+  };
+  LastOp last_op_ = LastOp::kNone;
 };
 
 }  // namespace litert::lm
