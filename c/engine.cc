@@ -17,6 +17,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <cstring>
 #include <string>
 #include <utility>
 #include <variant>
@@ -34,6 +35,7 @@
 #include "runtime/engine/engine_settings.h"
 #include "runtime/engine/io_types.h"
 #include "runtime/executor/executor_settings_base.h"
+#include "runtime/proto/sampler_params.pb.h"
 
 namespace {
 
@@ -131,7 +133,25 @@ struct LiteRtLmSessionConfig {
   std::unique_ptr<SessionConfig> config;
 };
 
+struct LiteRtLmConversationConfig {
+  std::unique_ptr<ConversationConfig> config;
+};
+
 extern "C" {
+
+SamplerParameters::Type ToSamplerParametersType(Type type) {
+  switch (type) {
+    case kTypeUnspecified:
+      return SamplerParameters::TYPE_UNSPECIFIED;
+    case kTopK:
+      return SamplerParameters::TOP_K;
+    case kTopP:
+      return SamplerParameters::TOP_P;
+    case kGreedy:
+      return SamplerParameters::GREEDY;
+  }
+  return SamplerParameters::TYPE_UNSPECIFIED;
+}
 
 LiteRtLmSessionConfig* litert_lm_session_config_create(
     const LiteRtLmSamplerParams* sampler_params) {
@@ -141,9 +161,7 @@ LiteRtLmSessionConfig* litert_lm_session_config_create(
   if (sampler_params) {
     SamplerParameters& params = c_config->config->GetMutableSamplerParams();
 
-    // Based on the current engine implementation, when the SamplerConfig is
-    // set, we must switch to the TOP_P sampling type.
-    params.set_type(SamplerParameters::TOP_P);
+    params.set_type(ToSamplerParametersType(sampler_params->type));
 
     params.set_k(sampler_params->top_k);
     params.set_p(sampler_params->top_p);
@@ -154,6 +172,61 @@ LiteRtLmSessionConfig* litert_lm_session_config_create(
 }
 
 void litert_lm_session_config_delete(LiteRtLmSessionConfig* config) {
+  delete config;
+}
+
+LiteRtLmConversationConfig*
+litert_lm_conversation_config_create(
+    LiteRtLmEngine* engine, const LiteRtLmSamplerParams* sampler_params,
+    const char* system_message_json) {
+  if (!engine || !engine->engine) {
+    return nullptr;
+  }
+
+  SessionConfig session_config = SessionConfig::CreateDefault();
+  if (sampler_params) {
+    SamplerParameters& params = session_config.GetMutableSamplerParams();
+    params.set_type(ToSamplerParametersType(sampler_params->type));
+    params.set_k(sampler_params->top_k);
+    params.set_p(sampler_params->top_p);
+    params.set_temperature(sampler_params->temperature);
+    params.set_seed(sampler_params->seed);
+  }
+
+  litert::lm::JsonPreface json_preface;
+  if (system_message_json) {
+    nlohmann::ordered_json system_message;
+    system_message["role"] = "system";
+    auto content =
+        nlohmann::ordered_json::parse(system_message_json, nullptr, false);
+    if (content.is_discarded()) {
+      // If JSON parsing fails, assume it's a plain string.
+      system_message["content"] = system_message_json;
+    } else {
+      system_message["content"] = content;
+    }
+    json_preface.messages = nlohmann::ordered_json::array({system_message});
+  }
+
+  auto conversation_config =
+      litert::lm::ConversationConfig::CreateFromSessionConfig(
+          *engine->engine, session_config, json_preface,
+          /*overwrite_processor_config=*/std::nullopt,
+          /*disable_constrained_decoding=*/true);
+
+  if (!conversation_config.ok()) {
+    ABSL_LOG(ERROR) << "Failed to create conversation config: "
+                    << conversation_config.status();
+    return nullptr;
+  }
+
+  auto* c_config = new LiteRtLmConversationConfig;
+  c_config->config =
+      std::make_unique<ConversationConfig>(*std::move(conversation_config));
+  return c_config;
+}
+
+void litert_lm_conversation_config_delete(LiteRtLmConversationConfig* config) {
   delete config;
 }
 

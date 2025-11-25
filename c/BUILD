@@ -57,6 +57,7 @@ cc_library(
         "//runtime/engine:io_types",
         "//runtime/executor:executor_settings_base",
         "//runtime/proto:engine_cc_proto",
+        "//runtime/proto:sampler_params_cc_proto",
     ],
 )
 
@@ -74,6 +75,9 @@ cc_test(
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:status_matchers",
         "@com_google_absl//absl/synchronization",
+        "@nlohmann_json//:json",
+        "//runtime/conversation",
+        "//runtime/conversation:io_types",
         "//runtime/engine:engine_settings",
         "//runtime/executor:executor_settings_base",
     ],

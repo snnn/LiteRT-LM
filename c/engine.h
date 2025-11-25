@@ -47,8 +47,24 @@ typedef struct LiteRtLmJsonResponse LiteRtLmJsonResponse;
 // Opaque pointer for LiteRT LM Session Config.
 typedef struct LiteRtLmSessionConfig LiteRtLmSessionConfig;
 
+// Opaque pointer for LiteRT LM Conversation Config.
+typedef struct LiteRtLmConversationConfig LiteRtLmConversationConfig;
+
+// Represents the type of sampler.
+typedef enum {
+  kTypeUnspecified = 0,
+  // Probabilistically pick among the top k tokens.
+  kTopK = 1,
+  // Probabilistically pick among the tokens such that the sum is greater
+  // than or equal to p tokens after first performing top-k sampling.
+  kTopP = 2,
+  // Pick the token with maximum logit (i.e., argmax).
+  kGreedy = 3,
+} Type;
+
 // Parameters for the sampler.
 typedef struct {
+  Type type;
   int32_t top_k;
   float top_p;
   float temperature;
@@ -67,6 +83,22 @@ LiteRtLmSessionConfig* litert_lm_session_config_create(
 // Destroys a LiteRT LM Session Config.
 // @param config The config to destroy.
 void litert_lm_session_config_delete(LiteRtLmSessionConfig* config);
+
+// Creates a LiteRT LM Conversation Config.
+// The caller is responsible for destroying the config using
+// `litert_lm_conversation_config_delete`.
+// @param engine The engine to use.
+// @param sampler_params The sampler parameters to use. If NULL, default
+// sampler parameters will be used.
+// @param system_message_json The system message in JSON format.
+// @return A pointer to the created config, or NULL on failure.
+LiteRtLmConversationConfig* litert_lm_conversation_config_create(
+    LiteRtLmEngine* engine, const LiteRtLmSamplerParams* sampler_params,
+    const char* system_message_json);
+
+// Destroys a LiteRT LM Conversation Config.
+// @param config The config to destroy.
+void litert_lm_conversation_config_delete(LiteRtLmConversationConfig* config);
 
 // Sets the minimum log level for the LiteRT LM library.
 // Log levels are: 0=INFO, 1=WARNING, 2=ERROR, 3=FATAL.

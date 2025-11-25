@@ -5,13 +5,17 @@
 #include <memory>
 #include <string>
 
+
 #include <gmock/gmock.h>
+#include "nlohmann/json.hpp"  // from @nlohmann_json
+#include "runtime/conversation/io_types.h"
 #include <gtest/gtest.h>
 #include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/status_matchers.h"  // from @com_google_absl
 #include "absl/synchronization/notification.h"  // from @com_google_absl
 #include "runtime/engine/engine_settings.h"
 #include "runtime/executor/executor_settings_base.h"
+#include "runtime/conversation/conversation.h"
 
 struct LiteRtLmEngineSettings {
   std::unique_ptr<litert::lm::EngineSettings> settings;
@@ -19,6 +23,10 @@ struct LiteRtLmEngineSettings {
 
 struct LiteRtLmSessionConfig {
   std::unique_ptr<litert::lm::SessionConfig> config;
+};
+
+struct LiteRtLmConversationConfig {
+  std::unique_ptr<litert::lm::ConversationConfig> config;
 };
 
 namespace {
@@ -50,6 +58,9 @@ using JsonResponsePtr =
 using SessionConfigPtr =
     std::unique_ptr<LiteRtLmSessionConfig,
                     decltype(&litert_lm_session_config_delete)>;
+using ConversationConfigPtr =
+    std::unique_ptr<LiteRtLmConversationConfig,
+                    decltype(&litert_lm_conversation_config_delete)>;
 
 TEST(EngineCTest, CreateSettingsWithNoVisionAndAudioBackend) {
   const std::string task_path = "test_model_path_1";
@@ -103,14 +114,9 @@ TEST(EngineCTest, SetCacheDir) {
             cache_dir);
 }
 
-TEST(EngineCTest, CreateSessionConfigWithNoSamplerParams) {
-  SessionConfigPtr config(litert_lm_session_config_create(nullptr),
-                          &litert_lm_session_config_delete);
-  ASSERT_NE(config, nullptr);
-}
-
 TEST(EngineCTest, CreateSessionConfigWithSamplerParams) {
   LiteRtLmSamplerParams sampler_params;
+  sampler_params.type = kTopP;
   sampler_params.top_k = 10;
   sampler_params.top_p = 0.5f;
   sampler_params.temperature = 0.1f;
@@ -125,6 +131,185 @@ TEST(EngineCTest, CreateSessionConfigWithSamplerParams) {
   EXPECT_FLOAT_EQ(params.p(), 0.5f);
   EXPECT_FLOAT_EQ(params.temperature(), 0.1f);
   EXPECT_EQ(params.seed(), 1234);
+}
+
+TEST(EngineCTest, CreateSessionConfigWithNoSamplerParams) {
+  SessionConfigPtr config(litert_lm_session_config_create(nullptr),
+                          &litert_lm_session_config_delete);
+  ASSERT_NE(config, nullptr);
+
+  // Verify that the default sampler parameters are used.
+  const auto& params = config->config->GetSamplerParams();
+  EXPECT_EQ(params.type(),
+            litert::lm::proto::SamplerParameters::TYPE_UNSPECIFIED);
+}
+
+TEST(EngineCTest, CreateConversationConfig) {
+  // 1. Create an engine.
+  const std::string task_path = GetTestdataPath(
+      "litert_lm/runtime/testdata/test_lm_new_metadata.task");
+
+  EngineSettingsPtr settings(
+      litert_lm_engine_settings_create(task_path.c_str(), "cpu",
+                                       /* vision_backend_str */ nullptr,
+                                       /* audio_backend_str */ nullptr),
+      &litert_lm_engine_settings_delete);
+  ASSERT_NE(settings, nullptr);
+  litert_lm_engine_settings_set_max_num_tokens(settings.get(), 16);
+
+  EnginePtr engine(litert_lm_engine_create(settings.get()),
+                   &litert_lm_engine_delete);
+  ASSERT_NE(engine, nullptr);
+
+  // 2. Create Sampler Params.
+  LiteRtLmSamplerParams sampler_params;
+  sampler_params.type = kTopP;
+  sampler_params.top_k = 10;
+  sampler_params.top_p = 0.5f;
+  sampler_params.temperature = 0.1f;
+  sampler_params.seed = 1234;
+
+  // 3. Create a Conversation Config with the Engine Handle, Sampler Params
+  // and System Message.
+  const std::string system_message =
+      R"({"type":"text","text":"You are a helpful assistant."})";
+  ConversationConfigPtr conversation_config(
+      litert_lm_conversation_config_create(
+          engine.get(), &sampler_params, system_message.c_str()),
+      &litert_lm_conversation_config_delete);
+  ASSERT_NE(conversation_config, nullptr);
+
+  // 4. Test to see if the Conversation Config has the Sampler Params.
+  const auto& params =
+      conversation_config->config->GetSessionConfig().GetSamplerParams();
+  EXPECT_EQ(params.k(), 10);
+  EXPECT_FLOAT_EQ(params.p(), 0.5f);
+  EXPECT_FLOAT_EQ(params.temperature(), 0.1f);
+  EXPECT_EQ(params.seed(), 1234);
+
+  // 5. Test to see if the Conversation Config has the correct System Message.
+  const auto& preface = std::get<litert::lm::JsonPreface>(
+      conversation_config->config->GetPreface());
+  nlohmann::ordered_json message;
+  message["role"] = "system";
+  message["content"] = nlohmann::ordered_json::parse(system_message);
+  nlohmann::ordered_json expected_messages =
+      nlohmann::ordered_json::array({message});
+  EXPECT_EQ(preface.messages, expected_messages);
+}
+
+TEST(EngineCTest, CreateConversationConfigWithNoSamplerParams) {
+  // 1. Create an engine.
+  const std::string task_path = GetTestdataPath(
+      "litert_lm/runtime/testdata/test_lm_new_metadata.task");
+
+  EngineSettingsPtr settings(
+      litert_lm_engine_settings_create(task_path.c_str(), "cpu",
+                                       /* vision_backend_str */ nullptr,
+                                       /* audio_backend_str */ nullptr),
+      &litert_lm_engine_settings_delete);
+  ASSERT_NE(settings, nullptr);
+  litert_lm_engine_settings_set_max_num_tokens(settings.get(), 16);
+
+  EnginePtr engine(litert_lm_engine_create(settings.get()),
+                   &litert_lm_engine_delete);
+  ASSERT_NE(engine, nullptr);
+
+  // 2. Create a Conversation Config with the Engine Handle and System Message.
+  const std::string system_message =
+      R"({"type":"text","text":"You are a helpful assistant."})";
+  ConversationConfigPtr conversation_config(
+      litert_lm_conversation_config_create(
+          engine.get(), /*sampler_params=*/nullptr, system_message.c_str()),
+      &litert_lm_conversation_config_delete);
+  ASSERT_NE(conversation_config, nullptr);
+
+  // 3. Test to see if the Conversation Config has the correct System Message.
+  const auto& preface = std::get<litert::lm::JsonPreface>(
+      conversation_config->config->GetPreface());
+  nlohmann::ordered_json message;
+  message["role"] = "system";
+  message["content"] = nlohmann::ordered_json::parse(system_message);
+  nlohmann::ordered_json expected_messages =
+      nlohmann::ordered_json::array({message});
+  EXPECT_EQ(preface.messages, expected_messages);
+}
+
+TEST(EngineCTest, CreateConversationConfigWithNoSamplerParamsNoSystemMessage) {
+  // 1. Create an engine.
+  const std::string task_path = GetTestdataPath(
+      "litert_lm/runtime/testdata/test_lm_new_metadata.task");
+
+  EngineSettingsPtr settings(
+      litert_lm_engine_settings_create(task_path.c_str(), "cpu",
+                                       /* vision_backend_str */ nullptr,
+                                       /* audio_backend_str */ nullptr),
+      &litert_lm_engine_settings_delete);
+  ASSERT_NE(settings, nullptr);
+  litert_lm_engine_settings_set_max_num_tokens(settings.get(), 16);
+
+  EnginePtr engine(litert_lm_engine_create(settings.get()),
+                   &litert_lm_engine_delete);
+  ASSERT_NE(engine, nullptr);
+
+  // 2. Create a Conversation Config with the Engine Handle and System Message.
+  ConversationConfigPtr conversation_config(
+      litert_lm_conversation_config_create(engine.get(),
+                                           /*sampler_params=*/nullptr,
+                                           /*system_message_json=*/nullptr),
+      &litert_lm_conversation_config_delete);
+  ASSERT_NE(conversation_config, nullptr);
+
+  // 4. Test to see if the Conversation Config has the correct System Message.
+  const auto& preface = std::get<litert::lm::JsonPreface>(
+      conversation_config->config->GetPreface());
+  EXPECT_EQ(preface.messages, nullptr);
+}
+
+TEST(EngineCTest, CreateConversationConfigWithNoSystemMessage) {
+  // 1. Create an engine.
+  const std::string task_path = GetTestdataPath(
+      "litert_lm/runtime/testdata/test_lm_new_metadata.task");
+
+  EngineSettingsPtr settings(
+      litert_lm_engine_settings_create(task_path.c_str(), "cpu",
+                                       /* vision_backend_str */ nullptr,
+                                       /* audio_backend_str */ nullptr),
+      &litert_lm_engine_settings_delete);
+  ASSERT_NE(settings, nullptr);
+  litert_lm_engine_settings_set_max_num_tokens(settings.get(), 16);
+
+  EnginePtr engine(litert_lm_engine_create(settings.get()),
+                   &litert_lm_engine_delete);
+  ASSERT_NE(engine, nullptr);
+
+  // 2. Create Sampler Params.
+  LiteRtLmSamplerParams sampler_params;
+  sampler_params.type = kTopP;
+  sampler_params.top_k = 10;
+  sampler_params.top_p = 0.5f;
+  sampler_params.temperature = 0.1f;
+  sampler_params.seed = 1234;
+
+  // 3. Create a Conversation Config with the Engine Handle and Sampler Params.
+  ConversationConfigPtr conversation_config(
+      litert_lm_conversation_config_create(
+          engine.get(), &sampler_params, /*system_message_json=*/nullptr),
+      &litert_lm_conversation_config_delete);
+  ASSERT_NE(conversation_config, nullptr);
+
+  // 4. Test to see if the Conversation Config has the default Sampler Params.
+  const auto& params =
+      conversation_config->config->GetSessionConfig().GetSamplerParams();
+  EXPECT_EQ(params.k(), 10);
+  EXPECT_FLOAT_EQ(params.p(), 0.5f);
+  EXPECT_FLOAT_EQ(params.temperature(), 0.1f);
+  EXPECT_EQ(params.seed(), 1234);
+
+  // 5. Test to see if the Conversation Config has the correct System Message.
+  const auto& preface = std::get<litert::lm::JsonPreface>(
+      conversation_config->config->GetPreface());
+  EXPECT_EQ(preface.messages, nullptr);
 }
 
 TEST(EngineCTest, GenerateContent) {

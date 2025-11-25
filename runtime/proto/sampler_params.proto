@@ -32,6 +32,7 @@ message SamplerParameters {
     // Pick the token with maximum logit (i.e., argmax).
     GREEDY = 3;
   }
+
   // The type of sampling used to pick the winning token. Ignored on the GPU
   // path, which defaults to combining top-k and top-p sampling.
   Type type = 1;
