@@ -212,7 +212,7 @@ litert_lm_conversation_config_create(
       litert::lm::ConversationConfig::CreateFromSessionConfig(
           *engine->engine, session_config, json_preface,
           /*overwrite_processor_config=*/std::nullopt,
-          /*disable_constrained_decoding=*/true);
+          /*enable_constrained_decoding=*/false);
 
   if (!conversation_config.ok()) {
     ABSL_LOG(ERROR) << "Failed to create conversation config: "
