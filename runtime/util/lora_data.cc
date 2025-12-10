@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/statusor.h"  // from @com_google_absl
@@ -82,6 +83,17 @@ class FlatBufferLoraData : public LoraData {
 
   bool HasTensor(absl::string_view name) const override {
     return GetBuffer(name) != nullptr;
+  }
+
+  std::vector<std::string> GetAllTensorNames() const override {
+    std::vector<std::string> tensor_names;
+    const tflite::Model* tflite_model = GetFlatBufferModel()->GetModel();
+    for (const tflite::SubGraph* subgraph : *tflite_model->subgraphs()) {
+      for (const tflite::Tensor* tfl_tensor : *subgraph->tensors()) {
+        tensor_names.push_back(tfl_tensor->name()->c_str());
+      }
+    }
+    return tensor_names;
   }
 
  protected:

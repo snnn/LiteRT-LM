@@ -1,15 +1,23 @@
 #include "runtime/components/lora.h"
 
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "absl/container/flat_hash_map.h"  // from @com_google_absl
 #include "absl/memory/memory.h"  // from @com_google_absl
 #include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/statusor.h"  // from @com_google_absl
+#include "absl/strings/match.h"  // from @com_google_absl
+#include "absl/strings/str_format.h"  // from @com_google_absl
+#include "absl/strings/str_replace.h"  // from @com_google_absl
 #include "absl/strings/string_view.h"  // from @com_google_absl
+#include "absl/types/span.h"  // from @com_google_absl
+// TODO: b/467362164 Move tflite_lora_utils to an OSS directory to support open
+// sourcing LoRA.
 #include "litert/cc/litert_compiled_model.h"  // from @litert
 #include "litert/cc/litert_macros.h"  // from @litert
 #include "litert/cc/litert_model.h"  // from @litert

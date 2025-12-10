@@ -37,6 +37,7 @@ namespace litert::lm {
 namespace {
 
 using ::testing::ElementsAreArray;
+using ::testing::IsSupersetOf;
 using ::testing::status::IsOkAndHolds;
 using ::testing::status::StatusIs;
 
@@ -136,6 +137,17 @@ TEST_P(LoraDataTest, HasTensorWorksAsExpected) {
   }
 
   EXPECT_FALSE(lora->HasTensor("unknown_tensor"));
+}
+
+TEST_P(LoraDataTest, GetAllTensorNamesWorksAsExpected) {
+  ASSERT_OK_AND_ASSIGN(std::unique_ptr<LoraData> lora, CreateLoraData());
+  std::vector<std::string> tensor_names = lora->GetAllTensorNames();
+  std::vector<std::string> expected_subset;
+  for (int i : {0, 5, 10, 15, 20}) {
+    expected_subset.push_back(
+        absl::StrCat("transformer.layer_", i, ".attn.q.w_prime_left"));
+  }
+  EXPECT_THAT(tensor_names, IsSupersetOf(expected_subset));
 }
 
 INSTANTIATE_TEST_SUITE_P(

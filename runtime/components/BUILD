@@ -552,7 +552,11 @@ cc_library(
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+        # TODO: b/467362164 Move tflite_lora_utils to an OSS directory to support open sourcing LoRA.
         "//runtime/util:litert_status_util",
         "//runtime/util:lora_data",
         "//runtime/util:lora_util",
