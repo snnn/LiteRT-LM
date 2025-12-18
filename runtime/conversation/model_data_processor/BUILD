@@ -235,6 +235,7 @@ cc_library(
         "//runtime/components:tokenizer",
         "//runtime/components/constrained_decoding:constraint",
         "//runtime/components/constrained_decoding:constraint_provider",
+        "//runtime/components/constrained_decoding:gemma_model_constraint_provider_lib",
         "//runtime/components/preprocessor:audio_preprocessor",
         "//runtime/components/preprocessor:audio_preprocessor_miniaudio",
         "//runtime/components/preprocessor:image_preprocessor",

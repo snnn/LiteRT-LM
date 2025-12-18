@@ -1112,5 +1112,89 @@ I am doing well, thanks for asking.<end_of_turn>
 #endif  // !defined(WIN32) && !defined(_WIN32) && !defined(__WIN32__) &&
         // !defined(__NT__) && !defined(_WIN64)
 
+TEST_F(Gemma3DataProcessorTest, CreateConstraint) {
+  // Create the model data processor.
+  ASSERT_OK_AND_ASSIGN(
+      auto processor,
+      Gemma3DataProcessor::Create(Gemma3DataProcessorConfig(),
+                                  /*preface=*/std::nullopt, tokenizer_.get(),
+                                  /*stop_token_ids=*/{},
+                                  /*enable_constrained_decoding=*/true));
+  const nlohmann::ordered_json tools = nlohmann::ordered_json::parse(R"json([
+    {
+      "name": "get_weather",
+      "description": "Gets weather information.",
+      "parameters": {
+        "properties": {
+          "location": {
+            "type": "STRING",
+            "description": "Weather location."
+          }
+        },
+        "required": ["location"]
+      }
+    },
+    {
+      "name": "get_stock_price",
+      "description": "Gets stock price.",
+      "parameters": {
+        "properties": {
+          "symbol": {
+            "type": "STRING",
+            "description": "Stock symbol."
+          }
+        },
+        "required": ["symbol"]
+      }
+    }
+  ])json");
+
+  ASSERT_OK_AND_ASSIGN(auto constraint, processor->CreateConstraint(tools));
+}
+
+TEST_F(Gemma3DataProcessorTest, CreateConstraintAlternativeToolFormat) {
+  // Create the model data processor.
+  ASSERT_OK_AND_ASSIGN(
+      auto processor,
+      Gemma3DataProcessor::Create(Gemma3DataProcessorConfig(),
+                                  /*preface=*/std::nullopt, tokenizer_.get(),
+                                  /*stop_token_ids=*/{},
+                                  /*enable_constrained_decoding=*/true));
+  const nlohmann::ordered_json tools = nlohmann::ordered_json::parse(R"json([
+    {
+      "function": {
+        "name": "get_weather",
+        "description": "Gets weather information.",
+        "parameters": {
+          "properties": {
+            "location": {
+              "type": "STRING",
+              "description": "Weather location."
+            }
+          },
+          "required": ["location"]
+        }
+      }
+    },
+    {
+      "function": {
+        "name": "get_stock_price",
+        "description": "Gets stock price.",
+        "parameters": {
+          "properties": {
+            "symbol": {
+              "type": "STRING",
+              "description": "Stock symbol."
+            }
+          },
+          "required": ["symbol"]
+        }
+      }
+    }
+  ])json");
+
+  ASSERT_OK_AND_ASSIGN(auto constraint, processor->CreateConstraint(tools));
+}
+
 }  // namespace
 }  // namespace litert::lm

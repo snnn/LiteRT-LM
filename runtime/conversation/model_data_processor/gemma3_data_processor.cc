@@ -32,6 +32,7 @@
 #include "nlohmann/json_fwd.hpp"  // from @nlohmann_json
 #include "litert/cc/litert_layout.h"  // from @litert
 #include "runtime/components/constrained_decoding/constraint.h"
+#include "runtime/components/constrained_decoding/gemma_model_constraint_provider.h"
 #include "runtime/components/preprocessor/audio_preprocessor.h"
 #include "runtime/components/preprocessor/audio_preprocessor_miniaudio.h"
 #include "runtime/components/preprocessor/image_preprocessor.h"
@@ -116,10 +117,44 @@ Gemma3DataProcessor::Create(Gemma3DataProcessorConfig config,
                             const Tokenizer* tokenizer,
                             const std::vector<std::vector<int>>& stop_token_ids,
                             bool enable_constrained_decoding) {
+  std::unique_ptr<LiteRtLmGemmaModelConstraintProvider,
+                  decltype(&LiteRtLmGemmaModelConstraintProvider_Destroy)>
+      constraint_provider(nullptr,
+                          &LiteRtLmGemmaModelConstraintProvider_Destroy);
+  if (enable_constrained_decoding) {
+    std::vector<const int*> stop_token_ids_ptrs;
+    std::vector<size_t> stop_token_lengths;
+    stop_token_ids_ptrs.reserve(stop_token_ids.size());
+    stop_token_lengths.reserve(stop_token_ids.size());
+    for (const auto& stop_tokens : stop_token_ids) {
+      stop_token_ids_ptrs.push_back(stop_tokens.data());
+      stop_token_lengths.push_back(stop_tokens.size());
+    }
+    if (tokenizer->GetTokenizerType() != TokenizerType::kSentencePiece) {
+      return absl::InvalidArgumentError(
+          "Constrained decoding is only supported for SentencePiece "
+          "tokenizer.");
+    }
+    auto sp_tokenizer =
+        reinterpret_cast<const SentencePieceTokenizer*>(tokenizer);
+    auto serialized_model_proto =
+        sp_tokenizer->GetProcessor().model_proto().SerializeAsString();
+    LiteRtLmGemmaModelConstraintProvider* provider =
+        LiteRtLmGemmaModelConstraintProvider_Create(
+            serialized_model_proto.data(), serialized_model_proto.size(),
+            stop_token_ids_ptrs.data(), stop_token_lengths.data(),
+            stop_token_ids.size());
+    if (provider == nullptr) {
+      return absl::InternalError(
+          "Failed to create GemmaModelConstraintProvider.");
+    }
+    constraint_provider.reset(provider);
+  }
   ASSIGN_OR_RETURN(auto audio_preprocessor,
                    AudioPreprocessorMiniAudio::Create(
                        AudioPreprocessorConfig::CreateDefaultUsmConfig()));
   return absl::WrapUnique(new Gemma3DataProcessor(
+      std::move(constraint_provider),
       config, preface, std::make_unique<StbImagePreprocessor>(),
       std::move(audio_preprocessor)));
 }
@@ -332,7 +367,35 @@ absl::StatusOr<ordered_json> Gemma3DataProcessor::FormatTools(
 absl::StatusOr<std::unique_ptr<Constraint>>
 Gemma3DataProcessor::CreateConstraint(
     const nlohmann::ordered_json& tools) const {
-  return nullptr;
+  if (constraint_provider_c_ == nullptr) {
+    return nullptr;
+  }
+  if (!tools.is_array()) {
+    return absl::InvalidArgumentError("Tools must be an array.");
+  }
+  nlohmann::ordered_json functions = nlohmann::ordered_json::array();
+  for (const auto& tool : tools) {
+    if (tool.contains("function")) {
+      functions.push_back(tool["function"]);
+    } else {
+      functions.push_back(tool);
+    }
+  }
+  LiteRtLmGemmaModelConstraintOptions gemma_options = {
+      .funcall_format = kLiteRtLmGemmaFuncallFormatPythonStyle,
+      .code_fence_start = config_.code_fence_start.c_str(),
+      .code_fence_end = config_.code_fence_end.c_str(),
+      .open_quote = nullptr,
+      .close_quote = nullptr,
+      .function_response_start = nullptr};
+  std::string functions_str = functions.dump();
+  LiteRtLmConstraint* constraint =
+      LiteRtLmGemmaModelConstraintProvider_CreateConstraintFromTools(
+          constraint_provider_c_.get(), functions_str.c_str(), &gemma_options);
+  if (constraint == nullptr) {
+    return absl::InternalError("Failed to create constraint with tools.");
+  }
+  return absl::WrapUnique(reinterpret_cast<Constraint*>(constraint));
 }
 
 absl::string_view Gemma3DataProcessor::CodeFenceStart() const {
