@@ -69,6 +69,7 @@ Gemma-3n-E2B | 4-bit per-channel | 4096         | 2965            | [download](h
 Gemma-3n-E4B | 4-bit per-channel | 4096         | 4235            | [download](https://huggingface.co/google/gemma-3n-E4B-it-litert-lm-preview)
 phi-4-mini  | 8-bit per-channel | 4096         | 3728            | [download](https://huggingface.co/litert-community/Phi-4-mini-instruct/resolve/main/Phi-4-mini-instruct_multi-prefill-seq_q8_ekv4096.litertlm)
 qwen2.5-1.5b| 8-bit per-channel | 4096         | 1524            | [download](https://huggingface.co/litert-community/Qwen2.5-1.5B-Instruct/resolve/main/Qwen2.5-1.5B-Instruct_multi-prefill-seq_q8_ekv4096.litertlm)
+FunctionGemma | 8-bit per-channel | 1024 | 288 |
 
 Below are the performance numbers of running each model on various devices. Note
 that the benchmark is measured with 1024 tokens prefill and 256 tokens decode (
@@ -86,6 +87,7 @@ with performance lock on Android devices).
 | Gemma-3n-E4B | MacBook Pro<br>(2023 M3) | CPU | 170.1 | 20.1 | 4096 |
 | Gemma-3n-E4B | Samsung S24<br>(Ultra) | CPU | 73.5 | 9.2 | 4096 |
 | Gemma-3n-E4B | Samsung S24<br>(Ultra) | GPU | 548.0 | 9.4 | 4096 |
+| FunctionGemma | Samsung S25<br>(Ultra) | CPU | 1718.4 | 125.9 | 1024 |
 
 ## Quick Start <span id="quick_start"></span>
 
