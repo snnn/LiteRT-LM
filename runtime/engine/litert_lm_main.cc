@@ -29,7 +29,6 @@
 
 #include "absl/base/log_severity.h"  // from @com_google_absl
 #include "absl/flags/flag.h"  // from @com_google_absl
-#include "absl/flags/parse.h"  // from @com_google_absl
 #include "absl/functional/any_invocable.h"  // from @com_google_absl
 #include "absl/log/absl_check.h"  // from @com_google_absl
 #include "absl/log/absl_log.h"  // from @com_google_absl
@@ -115,7 +114,6 @@ std::string GetInputPrompt() {
 }
 
 absl::Status MainHelper(int argc, char** argv) {
-  absl::ParseCommandLine(argc, argv);
   // Overrides the default for FLAGS_minloglevel to error.
   absl::SetMinLogLevel(absl::LogSeverityAtLeast::kError);
   absl::SetStderrThreshold(absl::LogSeverityAtLeast::kFatal);
@@ -154,10 +152,6 @@ absl::Status MainHelper(int argc, char** argv) {
   const std::string input_prompt = GetInputPrompt();
   std::cout << "input_prompt: " << input_prompt << std::endl;
   content_list.push_back({{"type", "text"}, {"text", input_prompt}});
-  RETURN_IF_ERROR(conversation->SendMessageAsync(
-      json::object({{"role", "user"}, {"content", content_list}}),
-      CreateMessageCallback()));
-  RETURN_IF_ERROR(engine->WaitUntilDone(absl::Minutes(10)));
 
   // Print the benchmark info.
   auto benchmark_info = conversation->GetBenchmarkInfo();

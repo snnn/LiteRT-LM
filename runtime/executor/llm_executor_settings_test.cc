@@ -230,6 +230,7 @@ enable_external_embeddings: 0
 max_tokens: 1024
 activation_data_type: FLOAT16
 max_num_images: 1
+lora_rank: 0
 cache_dir: )",
       kPathToCache, R"(
 cache_file: Not set
@@ -284,6 +285,7 @@ enable_external_embeddings: 0
 max_tokens: 1024
 activation_data_type: FLOAT16
 max_num_images: 1
+lora_rank: 0
 cache_dir: )",
       kPathToCache, R"(
 cache_file: Not set

@@ -212,6 +212,9 @@ class LlmExecutorSettings : public ExecutorSettingsBase {
     max_num_images_ = max_num_images;
   }
 
+  uint32_t GetLoraRank() const { return lora_rank_; }
+  void SetLoraRank(uint32_t lora_rank) { lora_rank_ = lora_rank; }
+
   template <typename T>
   absl::StatusOr<const T> GetBackendConfig() const {
     if (std::holds_alternative<T>(backend_config_)) {
@@ -255,6 +258,9 @@ class LlmExecutorSettings : public ExecutorSettingsBase {
 
   // Maximum number of images the model can handle.
   uint32_t max_num_images_;
+
+  // LoRA rank. 0 means LoRA is disabled.
+  uint32_t lora_rank_ = 0;
 
   // Backend specific config.
   std::variant<GpuArtisanConfig, GpuConfig, CpuConfig> backend_config_;

@@ -86,6 +86,7 @@ std::ostream& operator<<(std::ostream& os, const LlmExecutorSettings& config) {
   os << "max_tokens: " << config.GetMaxNumTokens() << "\n";
   os << "activation_data_type: " << config.GetActivationDataType() << "\n";
   os << "max_num_images: " << config.GetMaxNumImages() << "\n";
+  os << "lora_rank: " << config.GetLoraRank() << "\n";
   os << "cache_dir: " << config.GetCacheDir() << "\n";
   if (config.GetScopedCacheFile()) {
     os << "cache_file: " << config.GetScopedCacheFile()->file() << "\n";
@@ -131,6 +132,8 @@ absl::StatusOr<LlmExecutorSettings> LlmExecutorSettings::CreateDefault(
   settings.SetMaxNumTokens(0);
   // Disable image input by default.
   settings.SetMaxNumImages(0);
+  // Disable LoRA by default.
+  settings.SetLoraRank(0);
   return settings;
 }
 
