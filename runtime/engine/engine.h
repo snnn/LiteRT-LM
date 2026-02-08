@@ -229,6 +229,43 @@ class Engine {
     // Waits until all the tasks are done or the default timeout is reached.
     virtual absl::Status WaitUntilDone() = 0;
 
+    // Clones the session.
+    // The cloned session have all the settings and context
+    // of the original session up to the point that the clone function is
+    // called.
+    // - callback: Callback to when the streamed results.
+    //
+    // Example usage:
+    //   Session session1 = engine->CreateSession(...);
+    //   session1->Prefill("What is the tallest building ");
+    //   Session session2 = session1->Clone();
+    //   session1->Prefill("in the world?");
+    //   session1->Decode();
+    //   session2->Prefill("in France?");
+    //   session2->Decode();
+    virtual absl::StatusOr<std::unique_ptr<Session>> Clone() {
+      return absl::UnimplementedError("Not implemented.");
+    };
+
+    // Clones the session asynchronously.
+    // The cloned session have all the settings and context
+    // of the original session up to the point that the clone function is
+    // called.
+    // - callback: Callback to when the streamed results.
+    //
+    // Example usage:
+    //   Session session1 = engine->CreateSession(...);
+    //   session1->RunPrefillAsync("What is the tallest building ", ...);
+    //   Session session2 = session1->CloneAsync(...);
+    //   session1->RunPrefillAsync("in the world?", ...);
+    //   session1->RunDecodeAsync(...);
+    //   session2->RunPrefillAsync("in France?", ...);
+    //   session2->RunDecodeAsync(...);
+    virtual absl::StatusOr<std::unique_ptr<Session>> CloneAsync(
+        absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback) {
+      return absl::UnimplementedError("Not implemented.");
+    };
+
     // Get the reference to the session config for the session.
     virtual const SessionConfig& GetSessionConfig() const = 0;
 

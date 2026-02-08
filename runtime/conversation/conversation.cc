@@ -431,6 +431,27 @@ absl::Status Conversation::SendMessageAsync(
   return absl::OkStatus();
 };
 
+absl::StatusOr<Responses> Conversation::RunTextScoring(
+    const std::vector<absl::string_view>& target_text,
+    OptionalArgs optional_args) {
+  ASSIGN_OR_RETURN(std::unique_ptr<Engine::Session> cloned_session,
+                   session_->Clone());
+  return cloned_session->RunTextScoring(target_text,
+                                        /*store_token_lengths=*/true);
+}
+
+absl::Status Conversation::RunTextScoringAsync(
+    const std::vector<absl::string_view>& target_text,
+    absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback,
+    OptionalArgs optional_args) {
+  ASSIGN_OR_RETURN(std::unique_ptr<Engine::Session> cloned_session,
+                   session_->CloneAsync(nullptr));
+  return cloned_session
+      ->RunTextScoringAsync(target_text, std::move(callback),
+                            /*store_token_lengths=*/true)
+      .status();
+}
+
 absl::StatusOr<BenchmarkInfo> Conversation::GetBenchmarkInfo() {
   return session_->GetBenchmarkInfo();
 }

@@ -25,6 +25,7 @@
 #include "absl/functional/any_invocable.h"  // from @com_google_absl
 #include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/statusor.h"  // from @com_google_absl
+#include "absl/strings/string_view.h"  // from @com_google_absl
 #include "absl/synchronization/mutex.h"  // from @com_google_absl
 #include "runtime/components/constrained_decoding/constraint.h"
 #include "runtime/components/constrained_decoding/constraint_provider.h"
@@ -371,6 +372,33 @@ class Conversation {
   absl::Status SendMessageAsync(
       const Message& message,
       absl::AnyInvocable<void(absl::StatusOr<Message>)> user_callback,
+      OptionalArgs optional_args = OptionalArgs());
+
+  // Scores the target text after the prefill process is done. This function
+  // will run the decode process (with the existing context history) by feeding
+  // in the provided target text tokens and fetch the decode output logits that
+  // corresponds to the target text tokens. This is useful for running certain
+  // scoring metrics, e.g. perplexity.
+  // Note that the function will NOT update the conversation history or the
+  // internal state of the Conversation. The existing context history will
+  // remain the same after the function call.
+  // Note also that the function will NOT apply any additional prompt template
+  // to the target text as the goal is to get the score of the raw target text.
+  // Args:
+  //   - target_text: The target text to score.
+  //   - returns: This function returns the score associated with each of the
+  //     target texts. The scores are the log likelihood of the target text
+  //     given the existing context history.
+  absl::StatusOr<Responses> RunTextScoring(
+      const std::vector<absl::string_view>& target_text,
+      OptionalArgs optional_args = OptionalArgs());
+
+  // Similar to the above RunTextScoring function, but this is a not blocking
+  // call and the function will return right away. The processing status will
+  // be signaled through the callback.
+  absl::Status RunTextScoringAsync(
+      const std::vector<absl::string_view>& target_text,
+      absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback,
       OptionalArgs optional_args = OptionalArgs());
 
   // Returns the history of the conversation.

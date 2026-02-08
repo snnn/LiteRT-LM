@@ -104,6 +104,14 @@ class MockSession : public Engine::Session {
               (const std::vector<absl::string_view>& target_text,
                bool store_token_lengths),
               (override));
+  MOCK_METHOD(
+      absl::StatusOr<std::unique_ptr<Engine::Session::TaskController>>,
+      RunTextScoringAsync,
+      (const std::vector<absl::string_view>& target_text,
+       absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback,
+       bool store_token_lengths),
+      (override));
+
   MOCK_METHOD(absl::Status, RunPrefill,
               (const std::vector<InputData>& contents), (override));
   MOCK_METHOD(
@@ -126,6 +134,10 @@ class MockSession : public Engine::Session {
       (absl::AnyInvocable<void(absl::StatusOr<Responses>)> user_callback,
        const DecodeConfig& decode_config),
       (override));
+  MOCK_METHOD(absl::StatusOr<std::unique_ptr<Session>>, Clone, (), (override));
+  MOCK_METHOD(absl::StatusOr<std::unique_ptr<Session>>, CloneAsync,
+              (absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback),
+              (override));
   MOCK_METHOD(absl::StatusOr<BenchmarkInfo>, GetBenchmarkInfo, (), (override));
   MOCK_METHOD(absl::StatusOr<BenchmarkInfo*>, GetMutableBenchmarkInfo, (),
               (override));
@@ -584,6 +596,80 @@ TEST_P(ConversationTest, SendMultipleMessagesWithHistory) {
               testing::ElementsAre(user_message_1, assistant_message_1,
                                    user_messages[0], user_messages[1],
                                    assistant_message_2));
+}
+
+TEST_P(ConversationTest, RunTextScoring) {
+  // Set up mock Session.
+  auto mock_session = std::make_unique<MockSession>();
+  MockSession* mock_session_ptr = mock_session.get();
+  SessionConfig session_config = SessionConfig::CreateDefault();
+  session_config.SetStartTokenId(0);
+  session_config.GetMutableStopTokenIds().push_back({1});
+  *session_config.GetMutableLlmModelType().mutable_gemma3() = {};
+  EXPECT_CALL(*mock_session_ptr, GetSessionConfig())
+      .WillRepeatedly(testing::ReturnRef(session_config));
+  EXPECT_CALL(*mock_session_ptr, GetTokenizer())
+      .WillRepeatedly(testing::ReturnRef(*tokenizer_));
+
+  // Set up mock Engine.
+  auto mock_engine = std::make_unique<MockEngine>();
+  EXPECT_CALL(*mock_engine, CreateSession(testing::_))
+      .WillOnce(testing::Return(std::move(mock_session)));
+  ASSERT_OK_AND_ASSIGN(auto model_assets,
+                       ModelAssets::Create(GetTestdataPath(kTestLlmPath)));
+  ASSERT_OK_AND_ASSIGN(auto engine_settings, EngineSettings::CreateDefault(
+                                                 model_assets, Backend::CPU));
+  EXPECT_CALL(*mock_engine, GetEngineSettings())
+      .WillRepeatedly(testing::ReturnRef(engine_settings));
+
+  // Create Conversation.
+  ASSERT_OK_AND_ASSIGN(
+      auto conversation_config,
+      ConversationConfig::Builder()
+          .SetSessionConfig(session_config)
+          .SetOverwritePromptTemplate(PromptTemplate(kTestJinjaPromptTemplate))
+          .Build(*mock_engine));
+  ASSERT_OK_AND_ASSIGN(auto conversation,
+                       Conversation::Create(*mock_engine, conversation_config));
+
+  // Test sync scoring.
+  auto cloned_session_sync = std::make_unique<MockSession>();
+  EXPECT_CALL(*cloned_session_sync,
+              RunTextScoring(testing::ElementsAre("I am good."), true))
+      .WillOnce(
+          testing::Return(Responses(TaskState::kProcessing, {"I am good."})));
+  EXPECT_CALL(*mock_session_ptr, Clone())
+      .WillOnce(testing::Return(std::move(cloned_session_sync)));
+
+  ASSERT_OK_AND_ASSIGN(const Responses response,
+                       conversation->RunTextScoring({"I am good."}));
+  EXPECT_EQ(response.GetTexts()[0], "I am good.");
+
+  // Test async scoring.
+  auto cloned_session_async = std::make_unique<MockSession>();
+  EXPECT_CALL(*cloned_session_async,
+              RunTextScoringAsync(testing::ElementsAre("I am good."),
+                                  testing::_, true))
+      .WillOnce(
+          [](const std::vector<absl::string_view>& target_text,
+             absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback,
+             bool store_token_lengths) {
+            callback(Responses(TaskState::kProcessing, {"I am good."}));
+            return nullptr;
+          });
+  EXPECT_CALL(*mock_session_ptr, CloneAsync(testing::_))
+      .WillOnce(testing::Return(std::move(cloned_session_async)));
+
+  absl::Notification done;
+  std::string response_text;
+  EXPECT_OK(conversation->RunTextScoringAsync(
+      {"I am good."}, [&](absl::StatusOr<Responses> responses) {
+        ASSERT_OK(responses);
+        response_text = responses->GetTexts()[0];
+        done.Notify();
+      }));
+  done.WaitForNotificationWithTimeout(absl::Seconds(10));
+  EXPECT_EQ(response_text, "I am good.");
 }
 
 TEST_P(ConversationTest, SendMessageAsync) {
