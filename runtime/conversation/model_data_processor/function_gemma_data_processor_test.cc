@@ -1519,5 +1519,110 @@ INSTANTIATE_TEST_SUITE_P(
          .use_template_for_fc_format = true},
     }));
 
+TEST_F(FunctionGemmaDataProcessorTest,
+       MobileActionsTemplateSystemInstructionsSplitting) {
+  // Load the prompt template.
+  const std::string test_file_path =
+      GetTestdataPath("google-function-gemma-mobile-actions.jinja");
+  ASSERT_OK_AND_ASSIGN(const std::string template_content,
+                       GetContents(test_file_path));
+  PromptTemplate prompt_template(template_content);
+
+  nlohmann::ordered_json tools = nlohmann::ordered_json::parse(R"json([
+    {
+      "type": "function",
+      "function": {
+        "name": "get_weather",
+        "description": "Gets weather information.",
+        "parameters": {
+          "properties": {
+            "location": {
+              "description": "Weather location.",
+              "nullable": false,
+              "type": "string"
+            }
+          },
+          "required": ["location"],
+          "type": "object"
+        }
+      }
+    }
+  ])json");
+
+  nlohmann::ordered_json messages = nlohmann::ordered_json::parse(R"json([
+    {
+      "role": "system",
+      "content": [
+        {
+          "type": "text",
+          "text": "System message part 1. This will appear BEFORE tool declarations."
+        },
+        {
+          "type": "text",
+          "text": "System message part 2. This will appear AFTER tool declarations."
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": "How is the weather in Paris?"
+    }
+  ])json");
+
+  // Create the model data processor.
+  FunctionGemmaDataProcessorConfig config;
+  config.use_template_for_fc_format = false;
+  ASSERT_OK_AND_ASSIGN(auto processor,
+                       FunctionGemmaDataProcessor::Create(config));
+
+  // Format the tools.
+  ASSERT_OK_AND_ASSIGN(nlohmann::ordered_json formatted_tools,
+                       processor->FormatTools(tools));
+
+  // Convert the messages to template inputs.
+  nlohmann::ordered_json message_template_input =
+      nlohmann::ordered_json::array();
+  for (const auto& message : messages) {
+    ASSERT_OK_AND_ASSIGN(nlohmann::ordered_json input,
+                         processor->MessageToTemplateInput(message));
+    message_template_input.push_back(input);
+  }
+
+  // Render the template.
+  PromptTemplateInput template_input = {.messages = message_template_input,
+                                        .tools = formatted_tools,
+                                        .add_generation_prompt = true};
+  ASSERT_OK_AND_ASSIGN(const std::string rendered_prompt,
+                       prompt_template.Apply(template_input));
+
+  // Compare to the expected prompt.
+  EXPECT_THAT(
+      rendered_prompt,
+      Eq("<start_of_turn>developer\n"
+         "System message part 1. This will appear BEFORE tool declarations."
+         "\n\n"
+         "<start_function_declaration>"
+         "declaration:get_weather{"
+         "description:<escape>Gets weather information.<escape>,"
+         "parameters:{"
+         "properties:{"
+         "location:{"
+         "description:<escape>Weather location.<escape>,"
+         "nullable:false,"
+         "type:<escape>STRING<escape>"
+         "}"
+         "},"
+         "required:[<escape>location<escape>],"
+         "type:<escape>OBJECT<escape>"
+         "}"
+         "}"
+         "<end_function_declaration>"
+         "System message part 2. This will appear AFTER tool declarations."
+         "<end_of_turn>\n"
+         "<start_of_turn>user\n"
+         "How is the weather in Paris?<end_of_turn>\n"
+         "<start_of_turn>model\n"));
+}
+
 }  // namespace
 }  // namespace litert::lm
