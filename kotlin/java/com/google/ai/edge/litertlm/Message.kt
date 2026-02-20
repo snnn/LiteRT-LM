@@ -60,6 +60,12 @@ internal constructor(
 
   companion object {
 
+    /** Creates a system [Message] from the given text. */
+    fun system(text: String) = system(Contents.of(text))
+
+    /** Creates a system [Message] from the given contents. */
+    fun system(contents: Contents) = Message(Role.SYSTEM, contents)
+
     /** Creates a user [Message] from the given text. */
     fun user(text: String) = user(Contents.of(text))
 
