@@ -698,103 +698,98 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::PrefillInternal(
     const bool use_per_layer_embedding =
         signatures_.input_per_layer_embeddings.has_value();
     // If there is no pending input token and no input token to prefill, we can
-    // return early by storing the token as a pending input token.
-    if (!has_pending_input_token && prefill_length == 0) {
-      RETURN_IF_ERROR(
-          llm_context_->processed_context()
-              .processed_tokens()
-              .AddPendingInputToken({std::make_shared<TokenData>(ids[0])}));
-      ++llm_context_->runtime_state().current_step;
-      return absl::OkStatus();
-    }
-    int input_idx = 0;
-    if (has_pending_input_token) {
-      if (use_token_as_lookup) {
-        RETURN_IF_ERROR(FillInputBufferWithToken(
-            pending_input_token,
-            prefill_input_buffers[signatures_.input_tokens]));
-      } else {
-        RETURN_IF_ERROR(FillInputBufferWithToken(
-            pending_input_token,
-            prefill_input_buffers[signatures_.input_embeddings.value()]));
-        if (use_per_layer_embedding) {
+    // skip the prefill by storing the token as a pending input token.
+    bool skip_prefill = !has_pending_input_token && prefill_length == 0;
+    if (!skip_prefill) {
+      int input_idx = 0;
+      if (has_pending_input_token) {
+        if (use_token_as_lookup) {
           RETURN_IF_ERROR(FillInputBufferWithToken(
               pending_input_token,
-              prefill_input_buffers[signatures_.input_per_layer_embeddings
-                                        .value()],
-              /*is_per_layer_embedding=*/true));
+              prefill_input_buffers[signatures_.input_tokens]));
+        } else {
+          RETURN_IF_ERROR(FillInputBufferWithToken(
+              pending_input_token,
+              prefill_input_buffers[signatures_.input_embeddings.value()]));
+          if (use_per_layer_embedding) {
+            RETURN_IF_ERROR(FillInputBufferWithToken(
+                pending_input_token,
+                prefill_input_buffers[signatures_.input_per_layer_embeddings
+                                          .value()],
+                /*is_per_layer_embedding=*/true));
+          }
+        }
+        prefill_input_pos_ptr[input_idx] = internal_start_step;
+        RETURN_IF_ERROR(llm_context_->processed_context()
+                            .processed_tokens()
+                            .MarkPendingInputTokenAsProcessed());
+        ++prefill_input_pos_ptr;
+        ++input_idx;
+      }
+      std::transform(prefill_input_pos_ptr,
+                     prefill_input_pos_ptr + prefill_length,
+                     prefill_input_pos_ptr, [&](int token) mutable {
+                       return llm_context_->runtime_state().current_step++;
+                     });
+      std::vector<int> processed_input_tokens(ids.begin(),
+                                              ids.begin() + prefill_length);
+      llm_context_->processed_context().processed_tokens().AddProcessedTokens(
+          processed_input_tokens);
+
+      if (use_token_as_lookup) {
+        auto& prefill_input_buffer =
+            prefill_input_buffers[signatures_.input_tokens];
+        LITERT_ASSIGN_OR_RETURN(
+            auto prefill_input_lock_and_addr,
+            TensorBufferScopedLock::Create(prefill_input_buffer,
+                                           TensorBuffer::LockMode::kWrite));
+        int32_t* prefill_input_ptr =
+            static_cast<int32_t*>(prefill_input_lock_and_addr.second);
+        if (!has_pending_input_token) {
+          LITERT_ASSIGN_OR_RETURN(auto prefill_input_size,
+                                  prefill_input_buffer.PackedSize());
+          // If there is a pending input token, the zeros and the pending input
+          // token id are already filled in the above
+          // FillInputBufferWithToken() function, so we cannot zero out the
+          // whole prefill input buffer here.
+          //
+          // If there is no pending input token, we need to zero out the whole
+          // prefill input buffer.
+          memset(prefill_input_ptr, 0, prefill_input_size);
+        }
+        memcpy(prefill_input_ptr + input_idx, processed_input_tokens.data(),
+               processed_input_tokens.size() * sizeof(int32_t));
+      } else {
+        // If not using token as lookup, we must have input_embeddings. There is
+        // no need to create input_embeddings_ptr because TensorBuffer locking
+        // and filling is handled by the embedding lookup.
+        TensorBuffer* prefill_input_embeddings_buffer =
+            &(prefill_input_buffers[signatures_.input_embeddings.value()]);
+        RETURN_IF_ERROR(embedding_lookup_->LookupPrefill(
+            processed_input_tokens, prefill_input_embeddings_buffer,
+            /*offset=*/input_idx));
+
+        // We may have per layer embedding as well.
+        if (signatures_.input_per_layer_embeddings) {
+          TensorBuffer* prefill_input_per_layer_embeddings_buffer =
+              &(prefill_input_buffers[signatures_.input_per_layer_embeddings
+                                          .value()]);
+          RETURN_IF_ERROR(per_layer_embedding_lookup_->LookupPrefill(
+              processed_input_tokens, prefill_input_per_layer_embeddings_buffer,
+              /*offset=*/input_idx));
         }
       }
-      prefill_input_pos_ptr[input_idx] = internal_start_step;
-      RETURN_IF_ERROR(llm_context_->processed_context()
-                          .processed_tokens()
-                          .MarkPendingInputTokenAsProcessed());
-      ++prefill_input_pos_ptr;
-      ++input_idx;
-    }
-    std::transform(prefill_input_pos_ptr,
-                   prefill_input_pos_ptr + prefill_length,
-                   prefill_input_pos_ptr, [&](int token) mutable {
-                     return llm_context_->runtime_state().current_step++;
-                   });
-    std::vector<int> processed_input_tokens(ids.begin(),
-                                            ids.begin() + prefill_length);
-    llm_context_->processed_context().processed_tokens().AddProcessedTokens(
-        processed_input_tokens);
-
-    if (use_token_as_lookup) {
-      auto& prefill_input_buffer =
-          prefill_input_buffers[signatures_.input_tokens];
-      LITERT_ASSIGN_OR_RETURN(
-          auto prefill_input_lock_and_addr,
-          TensorBufferScopedLock::Create(prefill_input_buffer,
-                                         TensorBuffer::LockMode::kWrite));
-      int32_t* prefill_input_ptr =
-          static_cast<int32_t*>(prefill_input_lock_and_addr.second);
-      if (!has_pending_input_token) {
-        LITERT_ASSIGN_OR_RETURN(auto prefill_input_size,
-                                prefill_input_buffer.PackedSize());
-        // If there is a pending input token, the zeros and the pending input
-        // token id are already filled in the above
-        // FillInputBufferWithToken() function, so we cannot zero out the
-        // whole prefill input buffer here.
-        //
-        // If there is no pending input token, we need to zero out the whole
-        // prefill input buffer.
-        memset(prefill_input_ptr, 0, prefill_input_size);
+      if (signatures_.input_attn_mask.has_value()) {
+        RETURN_IF_ERROR(FillAttentionMask(
+            prefill_input_buffers[signatures_.input_attn_mask.value()],
+            start_step,
+            /*steps=*/prefill_length + input_idx));
       }
-      memcpy(prefill_input_ptr + input_idx, processed_input_tokens.data(),
-             processed_input_tokens.size() * sizeof(int32_t));
-    } else {
-      // If not using token as lookup, we must have input_embeddings. There is
-      // no need to create input_embeddings_ptr because TensorBuffer locking and
-      // filling is handled by the embedding lookup.
-      TensorBuffer* prefill_input_embeddings_buffer =
-          &(prefill_input_buffers[signatures_.input_embeddings.value()]);
-      RETURN_IF_ERROR(embedding_lookup_->LookupPrefill(
-          processed_input_tokens, prefill_input_embeddings_buffer,
-          /*offset=*/input_idx));
-
-      // We may have per layer embedding as well.
-      if (signatures_.input_per_layer_embeddings) {
-        TensorBuffer* prefill_input_per_layer_embeddings_buffer =
-            &(prefill_input_buffers[signatures_.input_per_layer_embeddings
-                                        .value()]);
-        RETURN_IF_ERROR(per_layer_embedding_lookup_->LookupPrefill(
-            processed_input_tokens, prefill_input_per_layer_embeddings_buffer,
-            /*offset=*/input_idx));
+      if (signatures_.input_int32_param.has_value()) {
+        RETURN_IF_ERROR(FillSingleBufferCacheParamTensor(
+            prefill_input_buffers[signatures_.input_int32_param.value()],
+            start_step, ids.size()));
       }
-    }
-    if (signatures_.input_attn_mask.has_value()) {
-      RETURN_IF_ERROR(FillAttentionMask(
-          prefill_input_buffers[signatures_.input_attn_mask.value()],
-          start_step,
-          /*steps=*/prefill_length + input_idx));
-    }
-    if (signatures_.input_int32_param.has_value()) {
-      RETURN_IF_ERROR(FillSingleBufferCacheParamTensor(
-          prefill_input_buffers[signatures_.input_int32_param.value()],
-          start_step, ids.size()));
     }
 
     // Add the last token of the current input as a pending input token, to be
@@ -817,8 +812,10 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::PrefillInternal(
                         .processed_tokens()
                         .AddPendingInputToken({std::move(last_input_token)}));
     ++llm_context_->runtime_state().current_step;
+    if (skip_prefill) {
+      return absl::OkStatus();
+    }
   }
-
   return BindTensorsAndRunPrefill(prefill_signature, prefill_input_buffers,
                                   async);
 }
