@@ -1387,6 +1387,55 @@ TEST_F(SessionBasicTest, GenerateContentStreamWithCancellation) {
   EXPECT_THAT(status, StatusIs(absl::StatusCode::kCancelled));
 }
 
+TEST_F(SessionBasicTest, GenerateContentStreamAndDelete) {
+  // Configure the executor to have a delay to simulate a long-running task.
+  ASSERT_OK_AND_ASSIGN(
+      auto fake_executor,
+      CreateFakeLlmExecutor(
+          // "Hello World!"
+          /*prefill_tokens=*/{{2, 90, 547, 58, 735, 210, 466, 2294}},
+          // "How's it going?"
+          /*decode_tokens=*/{
+              {224}, {24}, {8}, {66}, {246}, {18}, {2295}, {2294}}));
+  fake_executor->SetDecodeDelay(absl::Milliseconds(200));
+
+  const std::vector<std::vector<int>> stop_token_ids = {{2294}};
+  SessionConfig session_config = SessionConfig::CreateDefault();
+  session_config.GetMutableSamplerParams() = sampler_params_;
+  session_config.GetMutableStopTokenIds() = stop_token_ids;
+  session_config.SetStartTokenId(2);
+  session_config.SetSamplerBackend(Backend::CPU);
+  auto session =
+      SessionBasic::Create(fake_executor.get(), tokenizer_.get(),
+                           /*vision_executor=*/nullptr,
+                           /*audio_executor=*/nullptr, session_config,
+                           std::nullopt, worker_thread_pool_.get());
+  ASSERT_OK(session);
+
+  std::vector<InputData> inputs;
+  inputs.emplace_back(InputText("Hello World!"));
+
+  absl::Status status;
+  std::vector<std::string> responses;
+  absl::Notification done;
+
+  (*session)
+      ->GenerateContentStream(
+          inputs, CreateStreamingTestCallback(status, responses, done,
+                                              /*delay_on_next=*/true))
+      .IgnoreError();
+
+  // Reset the session to trigger destructor.
+  session->reset();
+
+  // Wait for thread pool to finish. If destructor does not wait, this might
+  // cause use-after-free.
+  worker_thread_pool_->WaitUntilDone(absl::Seconds(10)).IgnoreError();
+  if (!done.HasBeenNotified()) {
+    done.Notify();
+  }
+}
+
 class SessionBasicCancellationTest : public testing::TestWithParam<bool> {
  protected:
   void SetUp() override {

@@ -116,6 +116,7 @@ absl::StatusOr<std::unique_ptr<SessionBasic>> SessionBasic::Create(
 }
 
 SessionBasic::~SessionBasic() {
+  WaitUntilDone().IgnoreError();
   auto status = executor_.Reset();
   if (!status.ok()) {
     ABSL_LOG(ERROR) << "Failed to reset executor: " << status;
