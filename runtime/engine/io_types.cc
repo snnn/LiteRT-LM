@@ -118,7 +118,7 @@ absl::StatusOr<InputImage> InputImage::CreateCopy() const {
     absl::flat_hash_map<std::string, TensorBuffer> tensor_buffer_map_copy;
     for (const auto& [key, value] : tensor_buffer_map) {
       LITERT_ASSIGN_OR_RETURN(auto tensor_buffer_clone, value.Duplicate());
-      tensor_buffer_map_copy[key] = std::move(tensor_buffer_clone);
+      tensor_buffer_map_copy.try_emplace(key, std::move(tensor_buffer_clone));
     }
     return InputImage(std::move(tensor_buffer_map_copy));
   }
