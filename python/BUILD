@@ -189,13 +189,34 @@ py_package(
     deps = [":litert_lm_pkg_lib"],
 )
 
+# To build:
+# $ PYTHON_VERSION=3.10
+# $ bazel build --repo_env=HERMETIC_PYTHON_VERSION=${PYTHON_VERSION} --@rules_python//python/config_settings:python_version=${PYTHON_VERSION} -c opt python:litert_lm_wheel
 py_wheel(
     name = "litert_lm_wheel",
+    abi = select({
+        "@rules_python//python/config_settings:is_python_3.10": "cp310",
+        "@rules_python//python/config_settings:is_python_3.11": "cp311",
+        "@rules_python//python/config_settings:is_python_3.12": "cp312",
+        "@rules_python//python/config_settings:is_python_3.13": "cp313",
+        "//conditions:default": "none",
+    }),
     distribution = "litert_lm",
-    python_tag = "py3",
+    platform = select({
+        "//build_config:linux_x86_64": "manylinux_2_27_x86_64",
+        "//build_config:linux_arm64": "manylinux_2_27_aarch64",
+        "@platforms//os:macos": "macosx_12_0_arm64",
+        "@platforms//os:windows": "win_amd64",
+        "//conditions:default": "any",
+    }),
+    python_tag = select({
+        "@rules_python//python/config_settings:is_python_3.10": "cp310",
+        "@rules_python//python/config_settings:is_python_3.11": "cp311",
+        "@rules_python//python/config_settings:is_python_3.12": "cp312",
+        "@rules_python//python/config_settings:is_python_3.13": "cp313",
+        "//conditions:default": "py3",
+    }),
     strip_path_prefixes = ["python"],
     version = VERSION,
-    deps = [
-        ":litert_lm_pkg",
-    ],
+    deps = [":litert_lm_pkg"],
 )
