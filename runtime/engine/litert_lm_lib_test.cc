@@ -35,10 +35,40 @@ TEST(LiteRtLmLibTest, RunLiteRtLmWithEmptyModelPathReturnsError) {
               StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
+// Following tests are for various model file metadata and tokenizer types.
+// They are not exhaustive, but designed to test a variety of scenarios.
+// If metadata or tokenizer types are not handled properly, these tests could
+// fail.
 TEST(LiteRtLmLibTest, RunLiteRtLmWithValidModelPath) {
   const auto model_path =
       std::filesystem::path(::testing::SrcDir()) /
       "litert_lm/runtime/testdata/test_lm.litertlm";
+  LiteRtLmSettings settings;
+  settings.model_path = model_path.string();
+  settings.backend = "cpu";
+  // To save time on testing, and make sure we can end gracefully with this
+  // test litertlm file, we only run 32 tokens.
+  settings.max_num_tokens = 32;
+  EXPECT_OK(RunLiteRtLm(settings));
+}
+
+TEST(LiteRtLmLibTest, RunLiteRtLmWithInferredGemma3ModelType) {
+  const auto model_path =
+      std::filesystem::path(::testing::SrcDir()) /
+      "litert_lm/runtime/testdata/test_lm_no_model_type.litertlm";
+  LiteRtLmSettings settings;
+  settings.model_path = model_path.string();
+  settings.backend = "cpu";
+  // To save time on testing, and make sure we can end gracefully with this
+  // test litertlm file, we only run 32 tokens.
+  settings.max_num_tokens = 32;
+  EXPECT_OK(RunLiteRtLm(settings));
+}
+
+TEST(LiteRtLmLibTest, RunLiteRtLmWithDeepseekMetadataTokenizer) {
+  const auto model_path =
+      std::filesystem::path(::testing::SrcDir()) /
+      "litert_lm/runtime/testdata/test_lm_deepseek_metadata_tokenizer.litertlm";
   LiteRtLmSettings settings;
   settings.model_path = model_path.string();
   settings.backend = "cpu";

@@ -93,6 +93,8 @@ absl::StatusOr<proto::LlmModelType> InferLlmModelType(
   }
 
   proto::LlmModelType model_type;
+  model_type.mutable_generic_model();
+
   for (int token_id : kStartTurnTokenIdsToCheck) {
     auto start_turn_text = tokenizer->TokenIdsToText({token_id});
     if (!start_turn_text.ok()) {
@@ -107,7 +109,6 @@ absl::StatusOr<proto::LlmModelType> InferLlmModelType(
         // If the error is NotFound, it means the start turn token id is out of
         // range, indicating the model is a fake one that runs in unittest.
         // Return default model type.
-        model_type.mutable_generic_model();
         return model_type;
       } else {
         return start_turn_text.status();
