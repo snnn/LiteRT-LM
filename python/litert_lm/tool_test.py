@@ -17,7 +17,7 @@ from collections.abc import Sequence
 from absl.testing import absltest
 from absl.testing import parameterized
 
-from litert_lm import python as litert_lm
+import litert_lm
 
 
 # Helper functions for parameterized tests

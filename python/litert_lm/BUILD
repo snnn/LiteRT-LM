@@ -72,12 +72,16 @@ cc_binary(
 )
 
 pytype_strict_library(
-    name = "python",
+    name = "litert_lm",
     srcs = [
         "__init__.py",
         "litert_lm_ext.py",
     ],
-    data = [":litert_lm_ext.so"],
+    data = [":litert_lm_ext.so"] + select({
+        "@platforms//os:macos": [":copy_gemma_model_constraint_provider_dylib"],
+        "@platforms//os:windows": [], # the cc_binary rule already properly provisions this DLL into the package directory on Windows.
+        "//conditions:default": [":copy_gemma_model_constraint_provider_so"],
+    }),
     deps = [
         ":interfaces",
         ":tools",
@@ -90,10 +94,11 @@ py_test(
     data = ["//runtime/testdata"],
     tags = ["nowindows"],
     deps = [
-        "//python",
+        ":litert_lm",
         "@absl_py//absl/flags",
         "@absl_py//absl/testing:absltest",
     ],
+    imports = [".."],
 )
 
 py_test(
@@ -101,35 +106,16 @@ py_test(
     srcs = ["tool_test.py"],
     tags = ["nowindows"],
     deps = [
-        ":python",
+        ":litert_lm",
         "@absl_py//absl/testing:absltest",
         "@absl_py//absl/testing:parameterized",
     ],
+    imports = [".."],
 )
 
 load("@rules_python//python:packaging.bzl", "py_package", "py_wheel")
 load("@bazel_skylib//rules:copy_file.bzl", "copy_file")
 load("//:version.bzl", "VERSION")
-
-_PY_SOURCES = glob(
-    ["*.py"],
-    exclude = ["*_test.py"],
-)
-
-[
-    copy_file(
-        name = "copy_" + src.replace(".", "_"),
-        src = src,
-        out = "litert_lm/python/" + src,
-    )
-    for src in _PY_SOURCES
-]
-
-copy_file(
-    name = "copy_litert_lm_ext_so",
-    src = ":litert_lm_ext.so",
-    out = "litert_lm/python/litert_lm_ext.so",
-)
 
 genrule(
     name = "copy_gemma_model_constraint_provider_so",
@@ -138,7 +124,7 @@ genrule(
         "//build_config:linux_arm64": ["//prebuilt/linux_arm64:libGemmaModelConstraintProvider.so"],
         "//conditions:default": [],
     }),
-    outs = ["litert_lm/python/libGemmaModelConstraintProvider.so"],
+    outs = ["libGemmaModelConstraintProvider.so"],
     cmd = "if [ -n \"$(SRCS)\" ]; then cp $< $@; else touch $@; fi",
     tags = ["manual"],
 )
@@ -149,44 +135,14 @@ genrule(
         "@platforms//os:macos": ["//prebuilt/macos_arm64:libGemmaModelConstraintProvider.dylib"],
         "//conditions:default": [],
     }),
-    outs = ["litert_lm/python/libGemmaModelConstraintProvider.dylib"],
+    outs = ["libGemmaModelConstraintProvider.dylib"],
     cmd = "if [ -n \"$(SRCS)\" ]; then cp $< $@; else touch $@; fi",
     tags = ["manual"],
-)
-
-genrule(
-    name = "copy_gemma_model_constraint_provider_dll",
-    srcs = select({
-        "@platforms//os:windows": ["//prebuilt/windows_x86_64:libGemmaModelConstraintProvider.dll"],
-        "//conditions:default": [],
-    }),
-    outs = ["litert_lm/python/libGemmaModelConstraintProvider.dll"],
-    cmd = "if [ -n \"$(SRCS)\" ]; then cp $< $@; else touch $@; fi",
-    tags = ["manual"],
-)
-
-genrule(
-    name = "litert_lm_init",
-    outs = ["litert_lm/__init__.py"],
-    cmd = "touch $@",
-)
-
-pytype_strict_library(
-    name = "litert_lm_pkg_lib",
-    srcs = ["litert_lm/__init__.py"] + ["litert_lm/python/" + src for src in _PY_SOURCES],
-    data = [
-        "litert_lm/python/litert_lm_ext.so",
-    ] + select({
-        "@platforms//os:macos": [":copy_gemma_model_constraint_provider_dylib"],
-        "@platforms//os:windows": [":copy_gemma_model_constraint_provider_dll"],
-        "//conditions:default": [":copy_gemma_model_constraint_provider_so"],
-    }),
-    imports = ["."],
 )
 
 py_package(
     name = "litert_lm_pkg",
-    deps = [":litert_lm_pkg_lib"],
+    deps = [":litert_lm"],
 )
 
 # To build:

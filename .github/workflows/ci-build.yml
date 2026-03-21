@@ -155,7 +155,7 @@ jobs:
             @litert//litert/vendors/mediatek/dispatch:dispatch_api_so \
             @litert//litert/vendors/qualcomm/dispatch:dispatch_api_so \
             -- \
-            -//python:* \
+            -//python/... \
             -//schema/py:* \
             -//kotlin/java/com/google/ai/edge/litertlm/example/...
         env:

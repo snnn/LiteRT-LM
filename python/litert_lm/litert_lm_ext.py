@@ -14,4 +14,4 @@
 
 # This file is a shim for the C++ extension 'litert_lm_ext.so'. It is required
 # for build system visibility and type checking.
-from litert_lm.python.litert_lm_ext import *  # pylint: disable=wildcard-import
+from .litert_lm_ext import *  # pylint: disable=wildcard-import

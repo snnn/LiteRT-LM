@@ -17,7 +17,7 @@ import pathlib
 from absl import flags
 from absl.testing import absltest
 
-from litert_lm import python as litert_lm
+import litert_lm
 
 FLAGS = flags.FLAGS
 

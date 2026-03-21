@@ -152,7 +152,7 @@ void SetBackendAttr(nb::object& py_engine, const nb::handle& backend_handle) {
   if (backend_handle.is_none()) {
     py_engine.attr("backend") =
         nb::module_::import_(
-            "litert_lm.python.interfaces")
+            "litert_lm.interfaces")
             .attr("Backend")
             .attr("CPU");
   } else {
@@ -164,7 +164,7 @@ void SetBackendAttr(nb::object& py_engine, const nb::handle& backend_handle) {
 nb::object ToPyResponses(const Responses& responses) {
   nb::object py_responses_class =
       nb::module_::import_(
-          "litert_lm.python.interfaces")
+          "litert_lm.interfaces")
           .attr("Responses");
   auto texts = responses.GetTexts().empty() ? std::vector<std::string>()
                                             : responses.GetTexts();
@@ -483,7 +483,8 @@ NB_MODULE(litert_lm_ext, module) {
             if (!tools.is_none()) {
               nb::object tool_from_function =
                   nb::module_::import_(
-                      "litert_lm.python.tools")
+                      "litert_lm."
+                      "tools")
                       .attr("tool_from_function");
 
               nlohmann::json json_tools = nlohmann::json::array();

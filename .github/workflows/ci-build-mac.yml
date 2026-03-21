@@ -130,7 +130,7 @@ jobs:
             //... \
             //runtime/engine:litert_lm_main \
             -- \
-            -//python:* \
+            -//python/... \
             -//schema/py:* \
             -//kotlin/...
 
