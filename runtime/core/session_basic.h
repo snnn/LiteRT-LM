@@ -101,6 +101,16 @@ class SessionBasic : public Engine::Session {
       absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback,
       bool store_token_lengths) override;
 
+  absl::StatusOr<Responses> RunTokenIdScoring(
+      const std::vector<TokenIds>& target_token_ids,
+      bool store_token_lengths) override;
+
+  absl::StatusOr<std::unique_ptr<Engine::Session::TaskController>>
+  RunTokenIdScoringAsync(
+      const std::vector<TokenIds>& target_token_ids,
+      absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback,
+      bool store_token_lengths) override;
+
   absl::Status RunPrefill(const std::vector<InputData>& contents) override;
 
   absl::StatusOr<std::unique_ptr<Engine::Session::TaskController>>
@@ -184,7 +194,7 @@ class SessionBasic : public Engine::Session {
   // wrap it with lambda function for scheduling.
   absl::Status PrefillInternal(
       const std::vector<InputData>& preprocessed_contents,
-      bool wait_for_completion);
+      bool wait_for_completion, bool record_prefill_history = true);
 
   // The internal functions to decode the input prompt. It is for convenience to
   // wrap it with lambda function for scheduling.
@@ -192,6 +202,14 @@ class SessionBasic : public Engine::Session {
   absl::Status DecodeInternalStreaming(
       absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback,
       const DecodeConfig& decode_config);
+
+  absl::Status ResetAndReplayPrefillHistory();
+  absl::StatusOr<Responses> RunTextScoringSequentially(
+      const std::vector<absl::string_view>& target_text,
+      bool store_token_lengths);
+  absl::StatusOr<Responses> RunTokenIdScoringSequentially(
+      const std::vector<TokenIds>& target_token_ids,
+      bool store_token_lengths);
 
   // The executor used for run the LLM for prefill/decode.
   LlmExecutor& executor_;
@@ -240,6 +258,11 @@ class SessionBasic : public Engine::Session {
   // `RunPrefill` or `RunDecode` is called multiple times.
   enum class SessionState : int { kFresh, kPrefilled, kDecoded };
   SessionState session_state_ = SessionState::kFresh;
+
+  // The preprocessed prefill history, stored turn-by-turn so scoring can
+  // replay the shared prompt state for each continuation when multi-batch
+  // decode is unavailable.
+  std::vector<std::vector<InputData>> prefill_history_;
 
   // The set of executors that are already existed in the system. This is used
   // to avoid creating multiple sessions for the same executor.

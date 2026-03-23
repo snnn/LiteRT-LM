@@ -364,6 +364,37 @@ class Responses {
     return token_scores_;
   };
 
+  // Returns the const token ids vector.
+  const std::optional<std::vector<std::vector<int>>>& GetTokenIds() const {
+    return token_ids_;
+  }
+
+  // Returns the mutable token ids vector.
+  std::optional<std::vector<std::vector<int>>>& GetMutableTokenIds() {
+    return token_ids_;
+  };
+
+  // Returns the const greedy token ids vector.
+  const std::optional<std::vector<std::vector<int>>>& GetGreedyTokenIds()
+      const {
+    return greedy_token_ids_;
+  }
+
+  // Returns the mutable greedy token ids vector.
+  std::optional<std::vector<std::vector<int>>>& GetMutableGreedyTokenIds() {
+    return greedy_token_ids_;
+  };
+
+  // Returns the const finish reasons vector.
+  const std::optional<std::vector<std::string>>& GetFinishReasons() const {
+    return finish_reasons_;
+  }
+
+  // Returns the mutable finish reasons vector.
+  std::optional<std::vector<std::string>>& GetMutableFinishReasons() {
+    return finish_reasons_;
+  };
+
  private:
   // The state of the task.
   TaskState task_state_;
@@ -380,6 +411,15 @@ class Responses {
 
   // The output vector of token scores for each response text. Optional.
   std::optional<std::vector<std::vector<float>>> token_scores_;
+
+  // The output vector of token ids for each response text. Optional.
+  std::optional<std::vector<std::vector<int>>> token_ids_;
+
+  // The output vector of greedy token ids for each response text. Optional.
+  std::optional<std::vector<std::vector<int>>> greedy_token_ids_;
+
+  // The finish reasons for each response text. Optional.
+  std::optional<std::vector<std::string>> finish_reasons_;
 };
 std::ostream& operator<<(std::ostream& os, const Responses& responses);
 

@@ -18,6 +18,7 @@ load(
 )
 # [Google-internal load of `cc_binary`]
 
+load(":wheel_tags.bzl", "current_python_wheel_tags")
 load("@rules_python//python:defs.bzl", "py_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -147,6 +148,10 @@ genrule(
     tags = ["manual"],
 )
 
+current_python_wheel_tags(
+    name = "current_python_wheel_tags",
+)
+
 py_package(
     name = "litert_lm_pkg",
     # Explicitly specify packages to avoid including transitively linked shared
@@ -173,13 +178,7 @@ py_package(
 #     -c opt //python/litert_lm:litert_lm_wheel
 py_wheel(
     name = "litert_lm_wheel",
-    abi = select({
-        "@rules_python//python/config_settings:is_python_3.10": "cp310",
-        "@rules_python//python/config_settings:is_python_3.11": "cp311",
-        "@rules_python//python/config_settings:is_python_3.12": "cp312",
-        "@rules_python//python/config_settings:is_python_3.13": "cp313",
-        "//conditions:default": "none",
-    }),
+    abi = "$(ABI)",
     distribution = select({
         ":is_nightly": "litert-lm-nightly",
         "//conditions:default": "litert-lm",
@@ -214,6 +213,7 @@ py_wheel(
         "Operating System :: MacOS :: MacOS X",
     ],
     strip_path_prefixes = ["python"],
+    toolchains = [":current_python_wheel_tags"],
     version = select({
         ":is_nightly": VERSION + ".dev$(PYPI_NIGHTLY_DATE)",
         "//conditions:default": VERSION,

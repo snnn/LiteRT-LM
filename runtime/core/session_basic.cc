@@ -64,7 +64,49 @@ namespace {
 
 using TaskController = Engine::Session::TaskController;
 
+absl::StatusOr<std::vector<InputData>> CreateInputDataCopies(
+    const std::vector<InputData>& input_data) {
+  std::vector<InputData> copies;
+  copies.reserve(input_data.size());
+  for (const auto& item : input_data) {
+    ASSIGN_OR_RETURN(auto copy, CreateInputDataCopy(item));
+    copies.push_back(std::move(copy));
+  }
+  return copies;
 }
+
+absl::Status AppendSingleScoringResponse(const Responses& source,
+                                         Responses& destination) {
+  if (source.GetScores().size() != 1) {
+    return absl::InternalError("Expected a single scoring response.");
+  }
+  destination.GetMutableScores().push_back(source.GetScores()[0]);
+
+  if (source.GetTokenLengths().has_value()) {
+    if (!destination.GetTokenLengths().has_value()) {
+      destination.GetMutableTokenLengths() = std::vector<int>();
+    }
+    destination.GetMutableTokenLengths()->push_back(
+        source.GetTokenLengths()->at(0));
+  }
+  if (source.GetTokenScores().has_value()) {
+    if (!destination.GetTokenScores().has_value()) {
+      destination.GetMutableTokenScores() = std::vector<std::vector<float>>();
+    }
+    destination.GetMutableTokenScores()->push_back(
+        source.GetTokenScores()->at(0));
+  }
+  if (source.GetGreedyTokenIds().has_value()) {
+    if (!destination.GetGreedyTokenIds().has_value()) {
+      destination.GetMutableGreedyTokenIds() = std::vector<std::vector<int>>();
+    }
+    destination.GetMutableGreedyTokenIds()->push_back(
+        source.GetGreedyTokenIds()->at(0));
+  }
+  return absl::OkStatus();
+}
+
+}  // namespace
 
 absl::flat_hash_set<LlmExecutor*>* SessionBasic::occupied_executors_ =
     new absl::flat_hash_set<LlmExecutor*>();
@@ -269,12 +311,20 @@ absl::StatusOr<int> SessionBasic::GetCurrentStep() const {
 
 absl::Status SessionBasic::PrefillInternal(
     const std::vector<InputData>& preprocessed_contents,
-    bool wait_for_completion) {
+    bool wait_for_completion, bool record_prefill_history) {
+  std::optional<std::vector<InputData>> copied_prefill_contents;
+  if (record_prefill_history) {
+    ASSIGN_OR_RETURN(copied_prefill_contents,
+                     CreateInputDataCopies(preprocessed_contents));
+  }
   ASSIGN_OR_RETURN(ExecutorInputs inputs,
                    ProcessAndCombineContents(preprocessed_contents));
   ASSIGN_OR_RETURN(
       last_prefill_token_id_,
       Prefill(executor_, inputs, wait_for_completion, benchmark_info_));
+  if (copied_prefill_contents.has_value()) {
+    prefill_history_.push_back(std::move(*copied_prefill_contents));
+  }
   session_state_ = SessionState::kPrefilled;
   return absl::OkStatus();
 }
@@ -378,6 +428,21 @@ absl::StatusOr<std::unique_ptr<TaskController>> SessionBasic::RunPrefillAsync(
         }
       }));
   return nullptr;
+}
+
+absl::Status SessionBasic::ResetAndReplayPrefillHistory() {
+  RETURN_IF_ERROR(executor_.Reset());
+  if (audio_executor_ != nullptr) {
+    RETURN_IF_ERROR(audio_executor_->Reset());
+  }
+  session_state_ = SessionState::kFresh;
+  last_prefill_token_id_ = 0;
+  for (const auto& preprocessed_contents : prefill_history_) {
+    RETURN_IF_ERROR(PrefillInternal(preprocessed_contents,
+                                    /*wait_for_completion=*/true,
+                                    /*record_prefill_history=*/false));
+  }
+  return absl::OkStatus();
 }
 
 absl::StatusOr<Responses> SessionBasic::DecodeInternal(
@@ -525,13 +590,45 @@ absl::StatusOr<Responses> SessionBasic::RunTextScoring(
   return collected_responses;
 }
 
+absl::StatusOr<Responses> SessionBasic::RunTextScoringSequentially(
+    const std::vector<absl::string_view>& target_text,
+    bool store_token_lengths) {
+  Responses collected_responses(TaskState::kDone);
+  const auto benchmark_info_before = benchmark_info_;
+  ASSIGN_OR_RETURN(auto original_runtime_config, executor_.GetRuntimeConfig());
+  RuntimeConfig single_head_runtime_config = original_runtime_config;
+  single_head_runtime_config.output_heads = 1;
+
+  for (const auto& single_target : target_text) {
+    benchmark_info_ = benchmark_info_before;
+    RETURN_IF_ERROR(executor_.UpdateRuntimeConfig(single_head_runtime_config));
+    RETURN_IF_ERROR(ResetAndReplayPrefillHistory());
+    std::vector<int> decoded_ids(1, last_prefill_token_id_);
+    LITERT_ASSIGN_OR_RETURN(auto decoded_ids_buffer,
+                            CopyToTensorBuffer<int>(decoded_ids, {1, 1}));
+    ASSIGN_OR_RETURN(
+        auto single_response,
+        ScoreCustomSampling(executor_, tokenizer_, {single_target},
+                            /*temperature=*/1.0f,
+                            std::move(decoded_ids_buffer),
+                            store_token_lengths));
+    RETURN_IF_ERROR(
+        AppendSingleScoringResponse(single_response, collected_responses));
+  }
+
+  benchmark_info_ = benchmark_info_before;
+  RETURN_IF_ERROR(executor_.UpdateRuntimeConfig(original_runtime_config));
+  RETURN_IF_ERROR(ResetAndReplayPrefillHistory());
+  return collected_responses;
+}
+
 absl::StatusOr<std::unique_ptr<Engine::Session::TaskController>>
 SessionBasic::RunTextScoringAsync(
     const std::vector<absl::string_view>& target_text,
     absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback,
     bool store_token_lengths) {
-  if (target_text.size() != 1) {
-    return absl::InvalidArgumentError("Target text size should be 1.");
+  if (target_text.empty()) {
+    return absl::InvalidArgumentError("Target text must not be empty.");
   }
 
   // TODO(b/435040163): Handle the temperature. Should it be calculated from
@@ -541,16 +638,102 @@ SessionBasic::RunTextScoringAsync(
   RETURN_IF_ERROR(worker_thread_pool_.Schedule(
       [this, callback = std::move(callback), target_text, store_token_lengths,
        temperature]() mutable {
-        std::vector<int> decoded_ids(session_config_.GetNumOutputCandidates(),
-                                     last_prefill_token_id_);
+        if (target_text.size() > 1) {
+          callback(
+              RunTextScoringSequentially(target_text, store_token_lengths));
+          return;
+        }
+        std::vector<int> decoded_ids(target_text.size(), last_prefill_token_id_);
         auto decoded_ids_buffer = CopyToTensorBuffer<int>(
-            decoded_ids, {session_config_.GetNumOutputCandidates(), 1});
+            decoded_ids, {static_cast<int>(target_text.size()), 1});
         if (!decoded_ids_buffer.HasValue()) {
           callback(absl::InternalError(decoded_ids_buffer.Error().Message()));
           return;
         }
         callback(ScoreCustomSampling(
             executor_, tokenizer_, target_text, temperature,
+            std::move(decoded_ids_buffer.Value()), store_token_lengths));
+      }));
+  return nullptr;
+}
+
+absl::StatusOr<Responses> SessionBasic::RunTokenIdScoring(
+    const std::vector<TokenIds>& target_token_ids, bool store_token_lengths) {
+  absl::StatusOr<Responses> collected_responses;
+  auto scoring_sync_callback =
+      [&collected_responses](absl::StatusOr<Responses> responses) {
+        collected_responses = std::move(responses);
+      };
+
+  ASSIGN_OR_RETURN(
+      auto task_controller,
+      RunTokenIdScoringAsync(target_token_ids, std::move(scoring_sync_callback),
+                             store_token_lengths));
+  RETURN_IF_ERROR(worker_thread_pool_.WaitUntilDone(Engine::kDefaultTimeout));
+  return collected_responses;
+}
+
+absl::StatusOr<Responses> SessionBasic::RunTokenIdScoringSequentially(
+    const std::vector<TokenIds>& target_token_ids,
+    bool store_token_lengths) {
+  Responses collected_responses(TaskState::kDone);
+  const auto benchmark_info_before = benchmark_info_;
+  ASSIGN_OR_RETURN(auto original_runtime_config, executor_.GetRuntimeConfig());
+  RuntimeConfig single_head_runtime_config = original_runtime_config;
+  single_head_runtime_config.output_heads = 1;
+
+  for (const auto& single_target : target_token_ids) {
+    benchmark_info_ = benchmark_info_before;
+    RETURN_IF_ERROR(executor_.UpdateRuntimeConfig(single_head_runtime_config));
+    RETURN_IF_ERROR(ResetAndReplayPrefillHistory());
+    std::vector<int> decoded_ids(1, last_prefill_token_id_);
+    LITERT_ASSIGN_OR_RETURN(auto decoded_ids_buffer,
+                            CopyToTensorBuffer<int>(decoded_ids, {1, 1}));
+    ASSIGN_OR_RETURN(
+        auto single_response,
+        ScoreCustomSamplingTokenIds(executor_, {single_target},
+                                    /*temperature=*/1.0f,
+                                    std::move(decoded_ids_buffer),
+                                    store_token_lengths));
+    RETURN_IF_ERROR(
+        AppendSingleScoringResponse(single_response, collected_responses));
+  }
+
+  benchmark_info_ = benchmark_info_before;
+  RETURN_IF_ERROR(executor_.UpdateRuntimeConfig(original_runtime_config));
+  RETURN_IF_ERROR(ResetAndReplayPrefillHistory());
+  return collected_responses;
+}
+
+absl::StatusOr<std::unique_ptr<Engine::Session::TaskController>>
+SessionBasic::RunTokenIdScoringAsync(
+    const std::vector<TokenIds>& target_token_ids,
+    absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback,
+    bool store_token_lengths) {
+  if (target_token_ids.empty()) {
+    return absl::InvalidArgumentError("Target token ids must not be empty.");
+  }
+
+  auto temperature = 1.0f;
+  RETURN_IF_ERROR(worker_thread_pool_.Schedule(
+      [this, callback = std::move(callback),
+       target_token_ids = target_token_ids,
+       store_token_lengths, temperature]() mutable {
+        if (target_token_ids.size() > 1) {
+          callback(RunTokenIdScoringSequentially(target_token_ids,
+                                                store_token_lengths));
+          return;
+        }
+        std::vector<int> decoded_ids(target_token_ids.size(),
+                                     last_prefill_token_id_);
+        auto decoded_ids_buffer = CopyToTensorBuffer<int>(
+            decoded_ids, {static_cast<int>(target_token_ids.size()), 1});
+        if (!decoded_ids_buffer.HasValue()) {
+          callback(absl::InternalError(decoded_ids_buffer.Error().Message()));
+          return;
+        }
+        callback(ScoreCustomSamplingTokenIds(
+            executor_, target_token_ids, temperature,
             std::move(decoded_ids_buffer.Value()), store_token_lengths));
       }));
   return nullptr;

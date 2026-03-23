@@ -14,6 +14,7 @@
 
 #include <deque>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
@@ -160,6 +161,55 @@ void SetBackendAttr(nb::object& py_engine, const nb::handle& backend_handle) {
   }
 }
 
+template <typename T>
+std::optional<T> GetOptionalAttr(const nb::object& obj, const char* attr_name) {
+  if (!nb::hasattr(obj, attr_name)) {
+    return std::nullopt;
+  }
+  nb::object attr = obj.attr(attr_name);
+  if (attr.is_none()) {
+    return std::nullopt;
+  }
+  return nb::cast<T>(attr);
+}
+
+SessionConfig ParseSessionOptions(const nb::handle& options) {
+  SessionConfig session_config = SessionConfig::CreateDefault();
+  if (options.is_none()) {
+    return session_config;
+  }
+  nb::object options_obj = nb::borrow<nb::object>(options);
+  auto apply_prompt_template_in_session = GetOptionalAttr<bool>(
+      options_obj, "apply_prompt_template_in_session");
+  if (apply_prompt_template_in_session.has_value()) {
+    session_config.SetApplyPromptTemplateInSession(
+        *apply_prompt_template_in_session);
+  }
+  auto max_output_tokens = GetOptionalAttr<int>(options_obj, "max_output_tokens");
+  if (max_output_tokens.has_value()) {
+    session_config.SetMaxOutputTokens(*max_output_tokens);
+  }
+  auto num_output_candidates =
+      GetOptionalAttr<int>(options_obj, "num_output_candidates");
+  if (num_output_candidates.has_value()) {
+    session_config.SetNumOutputCandidates(*num_output_candidates);
+  }
+  return session_config;
+}
+
+DecodeConfig ParseDecodeOptions(const nb::handle& options) {
+  DecodeConfig decode_config = DecodeConfig::CreateDefault();
+  if (options.is_none()) {
+    return decode_config;
+  }
+  nb::object options_obj = nb::borrow<nb::object>(options);
+  auto max_output_tokens = GetOptionalAttr<int>(options_obj, "max_output_tokens");
+  if (max_output_tokens.has_value()) {
+    decode_config.SetMaxOutputTokens(*max_output_tokens);
+  }
+  return decode_config;
+}
+
 // Helper to convert C++ Responses to Python Responses dataclass.
 nb::object ToPyResponses(const Responses& responses) {
   nb::object py_responses_class =
@@ -170,7 +220,16 @@ nb::object ToPyResponses(const Responses& responses) {
                                             : responses.GetTexts();
   auto scores = responses.GetScores();
   auto token_lengths = responses.GetTokenLengths().value_or(std::vector<int>());
-  return py_responses_class(texts, scores, token_lengths);
+  auto token_scores =
+      responses.GetTokenScores().value_or(std::vector<std::vector<float>>());
+  auto token_ids =
+      responses.GetTokenIds().value_or(std::vector<std::vector<int>>());
+  auto greedy_token_ids =
+      responses.GetGreedyTokenIds().value_or(std::vector<std::vector<int>>());
+  auto finish_reasons =
+      responses.GetFinishReasons().value_or(std::vector<std::string>());
+  return py_responses_class(texts, scores, token_lengths, token_scores,
+                            token_ids, greedy_token_ids, finish_reasons);
 }
 
 // Note: Consider move to C++ API.
@@ -253,6 +312,51 @@ struct PyBenchmarkInfo {
   double last_prefill_tokens_per_second;
   int last_decode_token_count;
   double last_decode_tokens_per_second;
+};
+
+class PyTokenizer {
+ public:
+  explicit PyTokenizer(Engine* engine) : engine_(engine) {}
+
+  std::vector<int> Encode(std::string_view text) {
+    Tokenizer& tokenizer = const_cast<Tokenizer&>(engine_->GetTokenizer());
+    return VALUE_OR_THROW(tokenizer.TextToTokenIds(text));
+  }
+
+  std::string Decode(const std::vector<int>& token_ids) {
+    Tokenizer& tokenizer = const_cast<Tokenizer&>(engine_->GetTokenizer());
+    return VALUE_OR_THROW(tokenizer.TokenIdsToText(token_ids));
+  }
+
+  std::optional<int> GetBosTokenId() const {
+    const auto& metadata = engine_->GetEngineSettings().GetLlmMetadata();
+    if (!metadata.has_value() || !metadata->has_start_token() ||
+        !metadata->start_token().has_token_ids() ||
+        metadata->start_token().token_ids().ids_size() == 0) {
+      return std::nullopt;
+    }
+    return metadata->start_token().token_ids().ids(0);
+  }
+
+  std::vector<std::vector<int>> GetEosTokenIds() const {
+    std::vector<std::vector<int>> stop_token_ids;
+    const auto& metadata = engine_->GetEngineSettings().GetLlmMetadata();
+    if (!metadata.has_value()) {
+      return stop_token_ids;
+    }
+    stop_token_ids.reserve(metadata->stop_tokens_size());
+    for (const auto& stop_token : metadata->stop_tokens()) {
+      if (!stop_token.has_token_ids()) {
+        continue;
+      }
+      stop_token_ids.emplace_back(stop_token.token_ids().ids().begin(),
+                                  stop_token.token_ids().ids().end());
+    }
+    return stop_token_ids;
+  }
+
+ private:
+  Engine* engine_;
 };
 
 class Benchmark {
@@ -451,6 +555,12 @@ NB_MODULE(litert_lm_ext, module) {
       },
       nb::arg("log_severity"));
 
+  nb::class_<PyTokenizer>(module, "Tokenizer", nb::dynamic_attr())
+      .def("encode", &PyTokenizer::Encode, nb::arg("text"))
+      .def("decode", &PyTokenizer::Decode, nb::arg("token_ids"))
+      .def_prop_ro("bos_token_id", &PyTokenizer::GetBosTokenId)
+      .def_prop_ro("eos_token_ids", &PyTokenizer::GetEosTokenIds);
+
   nb::class_<Engine>(module, "_Engine", nb::dynamic_attr())
       // Support for Python context managers (with statement).
       // __enter__ returns the object itself.
@@ -530,11 +640,17 @@ NB_MODULE(litert_lm_ext, module) {
           nb::arg("tool_event_handler") = nb::none())
       .def(
           "create_session",
-          [](Engine& self) {
-            return VALUE_OR_THROW(
-                self.CreateSession(SessionConfig::CreateDefault()));
+          [](Engine& self, const nb::handle& options) {
+            return VALUE_OR_THROW(self.CreateSession(ParseSessionOptions(options)));
           },
-          "Creates a new session for this engine.");
+          nb::arg("options") = nb::none(),
+          "Creates a new session for this engine.")
+      .def(
+          "get_tokenizer",
+          [](const nb::object& self) {
+            return PyTokenizer(&nb::cast<Engine&>(self));
+          },
+          "Returns the tokenizer associated with this engine.");
 
   nb::class_<Engine::Session>(module, "Session", nb::dynamic_attr(),
                               "Session is responsible for hosting the "
@@ -566,10 +682,23 @@ NB_MODULE(litert_lm_ext, module) {
           "prompt/query into multiple chunks and call this function multiple "
           "times.")
       .def(
-          "run_decode",
-          [](Engine::Session& self) {
-            return ToPyResponses(VALUE_OR_THROW(self.RunDecode()));
+          "run_prefill_token_ids",
+          [](Engine::Session& self, const std::vector<int>& token_ids) {
+            auto token_id_buffer =
+                VALUE_OR_THROW(Tokenizer::TokenIdsToTensorBuffer(token_ids));
+            std::vector<InputData> input_data;
+            input_data.emplace_back(InputText(std::move(token_id_buffer)));
+            STATUS_OR_THROW(self.RunPrefill(input_data));
           },
+          nb::arg("token_ids"),
+          "Adds already-tokenized input ids to the session prefill state.")
+      .def(
+          "run_decode",
+          [](Engine::Session& self, const nb::handle& options) {
+            return ToPyResponses(
+                VALUE_OR_THROW(self.RunDecode(ParseDecodeOptions(options))));
+          },
+          nb::arg("options") = nb::none(),
           "Starts the decoding process for the model to predict the response "
           "based on the input prompt/query added after using run_prefill "
           "function.")
@@ -585,7 +714,18 @@ NB_MODULE(litert_lm_ext, module) {
                 self.RunTextScoring(target_text_views, store_token_lengths)));
           },
           nb::arg("target_text"), nb::arg("store_token_lengths") = false,
-          "Scores the target text after the prefill process is done.");
+          "Scores the target text after the prefill process is done.")
+      .def(
+          "run_token_scoring",
+          [](Engine::Session& self,
+             const std::vector<std::vector<int>>& target_token_ids,
+             bool store_token_lengths) {
+            return ToPyResponses(VALUE_OR_THROW(
+                self.RunTokenIdScoring(target_token_ids, store_token_lengths)));
+          },
+          nb::arg("target_token_ids"),
+          nb::arg("store_token_lengths") = false,
+          "Scores the target token ids after the prefill process is done.");
 
   nb::class_<Conversation>(module, "Conversation", nb::dynamic_attr())
       // Support for Python context managers (with statement).
@@ -657,18 +797,57 @@ NB_MODULE(litert_lm_ext, module) {
               tool_event_handler = self.attr("tool_event_handler");
             }
 
+            if (tool_map.empty() && tool_event_handler.is_none()) {
+              struct SimpleCallback {
+                std::shared_ptr<MessageIterator> iterator;
+
+                void operator()(absl::StatusOr<Message> message) const {
+                  iterator->Push(std::move(message));
+                }
+              };
+
+              absl::Status status = conversation.SendMessageAsync(
+                  json_message, SimpleCallback{iterator});
+              if (!status.ok()) {
+                std::stringstream error_msg_stream;
+                error_msg_stream << "SendMessageAsync failed: " << status;
+                throw std::runtime_error(error_msg_stream.str());
+              }
+              return iterator;
+            }
+
             struct AsyncState {
               int tool_call_count = 0;
               nlohmann::json pending_tool_response = nullptr;
             };
             auto state = std::make_shared<AsyncState>();
 
-            struct Callback {
+            struct PythonCallbackState {
+              explicit PythonCallbackState(nb::object self_obj,
+                                           nb::dict tool_map_obj,
+                                           nb::object tool_event_handler_obj)
+                  : self(std::move(self_obj)),
+                    tool_map(std::move(tool_map_obj)),
+                    tool_event_handler(std::move(tool_event_handler_obj)) {}
+
+              ~PythonCallbackState() {
+                nb::gil_scoped_acquire acquire;
+                self = nb::object();
+                tool_map = nb::dict();
+                tool_event_handler = nb::object();
+              }
+
               nb::object self;
-              std::shared_ptr<MessageIterator> iterator;
               nb::dict tool_map;
               nb::object tool_event_handler;
+            };
+            auto python_state = std::make_shared<PythonCallbackState>(
+                self, tool_map, tool_event_handler);
+
+            struct Callback {
+              std::shared_ptr<MessageIterator> iterator;
               std::shared_ptr<AsyncState> state;
+              std::shared_ptr<PythonCallbackState> python_state;
 
               void operator()(absl::StatusOr<Message> message) const {
                 if (!message.ok()) {
@@ -687,8 +866,9 @@ NB_MODULE(litert_lm_ext, module) {
                 if (json_msg.contains("tool_calls") &&
                     !json_msg["tool_calls"].empty()) {
                   nb::gil_scoped_acquire acquire;
-                  state->pending_tool_response =
-                      HandleToolCalls(json_msg, tool_map, tool_event_handler);
+                  state->pending_tool_response = HandleToolCalls(
+                      json_msg, python_state->tool_map,
+                      python_state->tool_event_handler);
                 }
 
                 if (json_msg.contains("content")) {
@@ -707,7 +887,8 @@ NB_MODULE(litert_lm_ext, module) {
                     state->pending_tool_response = nullptr;
 
                     nb::gil_scoped_acquire acquire;
-                    Conversation& conv = nb::cast<Conversation&>(self);
+                    Conversation& conv =
+                        nb::cast<Conversation&>(python_state->self);
                     absl::Status status =
                         conv.SendMessageAsync(next_message, *this);
                     if (!status.ok()) {
@@ -721,8 +902,7 @@ NB_MODULE(litert_lm_ext, module) {
             };
 
             absl::Status status = conversation.SendMessageAsync(
-                json_message,
-                Callback{self, iterator, tool_map, tool_event_handler, state});
+                json_message, Callback{iterator, state, python_state});
 
             if (!status.ok()) {
               std::stringstream error_msg_stream;

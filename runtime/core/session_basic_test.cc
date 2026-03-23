@@ -718,10 +718,10 @@ TEST_F(SessionBasicTest, RunTextScoringEmptyTargetTextFailure) {
   EXPECT_THAT((*session)->RunTextScoring(target_text,
                                          /*store_token_lengths=*/false),
               StatusIs(absl::StatusCode::kInvalidArgument,
-                       "Target text size should be 1."));
+                       "Target text must not be empty."));
 }
 
-TEST_F(SessionBasicTest, RunTextScoringMultipleTargetTextFailure) {
+TEST_F(SessionBasicTest, RunTextScoringMultipleTargetTextSuccess) {
   const std::vector<std::vector<int>> stop_token_ids = {{2294}};
   SessionConfig session_config = SessionConfig::CreateDefault();
   session_config.GetMutableSamplerParams() = sampler_params_;
@@ -733,20 +733,82 @@ TEST_F(SessionBasicTest, RunTextScoringMultipleTargetTextFailure) {
       CreateFakeLlmExecutor(
           // "Hello World!"
           /*prefill_tokens=*/{{2, 90, 547, 58, 735, 210, 466, 2294}},
-          // "How's it going?"
+          // "How's it going?" for two scoring candidates.
           /*decode_tokens=*/{
-              {224}, {24}, {8}, {66}, {246}, {18}, {2295}, {2294}}));
+              {224, 224},
+              {24, 24},
+              {8, 8},
+              {66, 66},
+              {246, 246},
+              {18, 18},
+              {2295, 2295},
+              {2294, 2294}}));
   auto session = SessionBasic::Create(
       executor.get(), tokenizer_.get(), /*vision_executor=*/nullptr,
       /*audio_executor=*/nullptr, session_config, std::nullopt,
       worker_thread_pool_.get());
+  std::vector<InputData> inputs;
+  inputs.emplace_back(InputText(std::string("Hello World!")));
+  ASSERT_OK((*session)->RunPrefill(inputs));
   std::vector<absl::string_view> target_text;
   target_text.push_back("How's it going?");
-  target_text.push_back("How are you?");
-  EXPECT_THAT(
-      (*session)->RunTextScoring(target_text, /*store_token_lengths=*/false),
-      StatusIs(absl::StatusCode::kInvalidArgument,
-               "Target text size should be 1."));
+  target_text.push_back("How's it going?");
+  ASSERT_OK_AND_ASSIGN(
+      auto responses,
+      (*session)->RunTextScoring(target_text, /*store_token_lengths=*/true));
+  EXPECT_THAT(responses.GetScores(), testing::SizeIs(2));
+  EXPECT_THAT(responses.GetTokenScores(),
+              testing::Optional(testing::SizeIs(2)));
+  EXPECT_THAT(responses.GetGreedyTokenIds(),
+              testing::Optional(testing::SizeIs(2)));
+  ASSERT_TRUE(responses.GetTokenLengths().has_value());
+  EXPECT_EQ(responses.GetTokenLengths()->size(), 2);
+}
+
+TEST_F(SessionBasicTest,
+       RunTextScoringMultipleTargetTextTemporarilyOverridesOutputHeads) {
+  const std::vector<std::vector<int>> stop_token_ids = {{2294}};
+  SessionConfig session_config = SessionConfig::CreateDefault();
+  session_config.GetMutableSamplerParams() = sampler_params_;
+  session_config.GetMutableStopTokenIds() = stop_token_ids;
+  session_config.SetStartTokenId(2);
+  session_config.SetSamplerBackend(Backend::CPU);
+  ASSERT_OK_AND_ASSIGN(
+      auto executor,
+      CreateFakeLlmExecutor(
+          /*prefill_tokens=*/{{2, 90, 547, 58, 735, 210, 466, 2294}},
+          /*decode_tokens=*/{
+              {224, 224},
+              {24, 24},
+              {8, 8},
+              {66, 66},
+              {246, 246},
+              {18, 18},
+              {2295, 2295},
+              {2294, 2294}}));
+  RuntimeConfig runtime_config;
+  runtime_config.output_heads = 1;
+  ASSERT_OK(executor->UpdateRuntimeConfig(runtime_config));
+
+  auto session = SessionBasic::Create(
+      executor.get(), tokenizer_.get(), /*vision_executor=*/nullptr,
+      /*audio_executor=*/nullptr, session_config, std::nullopt,
+      worker_thread_pool_.get());
+  std::vector<InputData> inputs;
+  inputs.emplace_back(InputText(std::string("Hello World!")));
+  ASSERT_OK((*session)->RunPrefill(inputs));
+
+  std::vector<absl::string_view> target_text = {"How's it going?",
+                                                "How's it going?"};
+  ASSERT_OK_AND_ASSIGN(
+      auto responses,
+      (*session)->RunTextScoring(target_text, /*store_token_lengths=*/true));
+  EXPECT_THAT(responses.GetScores(), testing::SizeIs(2));
+
+  ASSERT_OK_AND_ASSIGN(auto restored_runtime_config,
+                       executor->GetRuntimeConfig());
+  ASSERT_TRUE(restored_runtime_config.output_heads.has_value());
+  EXPECT_EQ(*restored_runtime_config.output_heads, 1);
 }
 
 TEST_F(SessionBasicTest, RunTextScoringWithoutTokenLengthsSuccess) {
