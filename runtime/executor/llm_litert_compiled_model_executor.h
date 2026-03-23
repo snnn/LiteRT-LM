@@ -109,6 +109,13 @@ class LlmLiteRtCompiledModelExecutorBase : public LlmExecutor {
   // Sets the current step of the executor.
   absl::Status SetCurrentStep(int new_step) override;
 
+  absl::StatusOr<RuntimeConfig> GetRuntimeConfig() const override {
+    return llm_context_->runtime_config();
+  }
+
+  absl::Status UpdateRuntimeConfig(
+      const RuntimeConfig& runtime_config) override;
+
   // Resets all of the internal states.
   absl::Status Reset() override;
 

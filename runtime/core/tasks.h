@@ -53,6 +53,11 @@ absl::StatusOr<Responses> Score(
     const std::vector<absl::string_view>& target_texts, float temperature,
     litert::TensorBuffer decoded_ids, bool store_token_lengths = false);
 
+absl::StatusOr<Responses> ScoreTokenIds(
+    LlmExecutor& executor, const std::vector<TokenIds>& target_token_ids,
+    float temperature, litert::TensorBuffer decoded_ids,
+    bool store_token_lengths = false);
+
 }  // namespace litert::lm::Tasks
 
 #endif  // THIRD_PARTY_ODML_LITERT_LM_RUNTIME_CORE_TASKS_H_

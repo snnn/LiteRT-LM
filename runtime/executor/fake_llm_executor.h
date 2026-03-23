@@ -84,6 +84,12 @@ class FakeLlmExecutor : public LlmExecutor {
     return &executor_settings_;
   };
   absl::StatusOr<int> GetCurrentStep() const override { return current_step_; }
+  absl::StatusOr<RuntimeConfig> GetRuntimeConfig() const override {
+    return runtime_config_;
+  }
+
+  absl::Status UpdateRuntimeConfig(
+      const RuntimeConfig& runtime_config) override;
 
   absl::Status SetCurrentStep(int current_step) override {
     current_step_ = current_step;
@@ -120,8 +126,9 @@ class FakeLlmExecutor : public LlmExecutor {
   // The number of times the Decode function has been called.
   int decode_times_;
 
-  // The executor settings.
+ // The executor settings.
   LlmExecutorSettings executor_settings_;
+  RuntimeConfig runtime_config_;
 
   // The current step of the executor.
   int current_step_;
@@ -144,6 +151,8 @@ class FakeLlmExecutor : public LlmExecutor {
     kDecode,
   };
   LastOp last_op_ = LastOp::kNone;
+
+  absl::StatusOr<int> GetOutputHeads() const;
 };
 
 }  // namespace litert::lm

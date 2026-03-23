@@ -64,6 +64,44 @@ class ToolEventHandler(abc.ABC):
     """
 
 
+@dataclasses.dataclass
+class SessionOptions:
+  """Options applied when a new low-level session is created."""
+
+  apply_prompt_template_in_session: bool | None = None
+  max_output_tokens: int | None = None
+  num_output_candidates: int | None = None
+
+
+@dataclasses.dataclass
+class DecodeOptions:
+  """Options applied to a single decode request."""
+
+  max_output_tokens: int | None = None
+
+
+class AbstractTokenizer(abc.ABC):
+  """Tokenizer interface exposed by LiteRT-LM."""
+
+  @abc.abstractmethod
+  def encode(self, text: str) -> list[int]:
+    """Encodes text into token ids."""
+
+  @abc.abstractmethod
+  def decode(self, token_ids: list[int]) -> str:
+    """Decodes token ids back to text."""
+
+  @property
+  @abc.abstractmethod
+  def bos_token_id(self) -> int | None:
+    """Returns the configured BOS token id if present."""
+
+  @property
+  @abc.abstractmethod
+  def eos_token_ids(self) -> list[list[int]]:
+    """Returns the configured stop token ids."""
+
+
 @dataclasses.dataclass(kw_only=True)
 class AbstractEngine(abc.ABC):
   """Abstract base class for LiteRT-LM engines.
@@ -110,12 +148,18 @@ class AbstractEngine(abc.ABC):
     """
 
   @abc.abstractmethod
-  def create_session(self) -> AbstractSession:
+  def create_session(
+      self, options: SessionOptions | None = None
+  ) -> AbstractSession:
     """Creates a new session for this engine.
 
     Returns:
         A new session instance for low-level interaction with the model.
     """
+
+  @abc.abstractmethod
+  def get_tokenizer(self) -> AbstractTokenizer:
+    """Returns the tokenizer associated with this engine."""
 
 
 class AbstractConversation(abc.ABC):
@@ -257,11 +301,19 @@ class Responses:
         length is equal to length of the "target_text" in "run_text_scoring".
         This field is only used in `run_text_scoring` when `store_token_lengths`
         is True.
+      token_scores: The per-token log likelihoods for each scored target.
+      token_ids: The raw generated token ids for each decoded candidate.
+      greedy_token_ids: The greedy token ids seen during scoring.
+      finish_reasons: The decode finish reason for each candidate.
   """
 
   texts: list[str] = dataclasses.field(default_factory=list)
   scores: list[float] = dataclasses.field(default_factory=list)
   token_lengths: list[int] = dataclasses.field(default_factory=list)
+  token_scores: list[list[float]] = dataclasses.field(default_factory=list)
+  token_ids: list[list[int]] = dataclasses.field(default_factory=list)
+  greedy_token_ids: list[list[int]] = dataclasses.field(default_factory=list)
+  finish_reasons: list[str] = dataclasses.field(default_factory=list)
 
 
 # TODO(b/482060476): Add clone() API once switching to advanced engine.
@@ -292,7 +344,11 @@ class AbstractSession(abc.ABC):
     """
 
   @abc.abstractmethod
-  def run_decode(self) -> Responses:
+  def run_prefill_token_ids(self, token_ids: list[int]) -> None:
+    """Runs prefill with already-tokenized text."""
+
+  @abc.abstractmethod
+  def run_decode(self, options: DecodeOptions | None = None) -> Responses:
     """Runs the decode stage of the session.
 
     Returns:
@@ -316,3 +372,11 @@ class AbstractSession(abc.ABC):
         Responses: The log likelihood scores of the target text given the
         existing session state.
     """
+
+  @abc.abstractmethod
+  def run_token_scoring(
+      self,
+      target_token_ids: list[list[int]],
+      store_token_lengths: bool = False,
+  ) -> Responses:
+    """Runs the scoring stage on already-tokenized targets."""
