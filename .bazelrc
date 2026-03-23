@@ -76,7 +76,6 @@ build --define=allow_oversize_protos=true
 build:windows --define=protobuf_allow_msvc=true
 
 build --spawn_strategy=standalone
-build -c opt
 
 # Make Bazel print out all options from rc files.
 build --announce_rc
@@ -130,9 +129,10 @@ build --repo_env=HERMETIC_PYTHON_VERSION=3.13
 
 # Default options should come above this line.
 
-# Enforce clang as C/C++ compiler on Linux.
-build:linux --action_env=CC=clang
-build:linux --action_env=CXX=clang++
+# Use the system GCC toolchain on Linux by default.
+# (Clang is not always installed, and forcing it breaks local builds.)
+build:linux --action_env=CC=gcc
+build:linux --action_env=CXX=g++
 
 # Android configs. Bazel needs to have --cpu and --fat_apk_cpu both set to the
 # target CPU to build transient dependencies correctly. See
@@ -216,16 +216,8 @@ build:monolithic --experimental_link_static_libraries_once=false  # b/229868128
 
 # Debug config
 build:dbg -c dbg
-# Only include debug info for files under tensorflow/, excluding kernels, to
-# reduce the size of the debug info in the binary. This is because if the debug
-# sections in the ELF binary are too large, errors can occur. See
-# https://github.com/tensorflow/tensorflow/issues/48919.
-# Users can still include debug info for a specific kernel, e.g. with:
-#     --config=dbg --per_file_copt=+tensorflow/core/kernels/identity_op.*@-g
-# Since this .bazelrc file is synced between the tensorflow/tensorflow repo and
-# the openxla/xla repo, also include debug info for files under xla/.
-build:dbg --per_file_copt=+.*,-tensorflow.*,-xla.*@-g0
-build:dbg --per_file_copt=+tensorflow/core/kernels.*@-g0
+# Keep debug symbols in outputs (don't strip).
+build:dbg --strip=never
 # for now, disable arm_neon. see: https://github.com/tensorflow/tensorflow/issues/33360
 build:dbg --cxxopt -DTF_LITE_DISABLE_X86_NEON
 # AWS SDK must be compiled in release mode. see: https://github.com/tensorflow/tensorflow/issues/37498
@@ -266,6 +258,10 @@ build:linux --copt="-Werror=unused-result"
 # Add switch as an error on Linux.
 build:linux --copt="-Wswitch"
 build:linux --copt="-Werror=switch"
+# GCC 14+ may warn about "changes meaning of 'X'" in some deps (e.g. LiteRT).
+# Treat it as non-fatal to keep GCC builds working.
+build:linux --copt="-Wno-changes-meaning"
+build:linux --cxxopt="-Wno-changes-meaning"
 # This was added in clang-16 by https://reviews.llvm.org/D133574.
 # Can be removed once upb is updated, since a type definition is used within
 # offset of in the current version of ubp.
@@ -540,5 +536,16 @@ common --noenable_bzlmod
 build --features=-layering_check
 build --host_features=-layering_check
 
+
 build --features=-header_modules
 build --host_features=-header_modules
+
+build:macos --features=-layering_check
+build:macos --features=-header_modules
+build:macos --cxxopt="-fno-modules"
+build:macos --host_cxxopt="-fno-modules"
+
+# Windows Configuration (MSVC)
+# We leave this blank or add MSVC-specific flags if needed later.
+# MSVC doesn't typically enable strict layering checks by default anyway.
+

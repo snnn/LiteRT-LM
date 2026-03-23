@@ -1,3 +1,7 @@
 {
   LiteRt*;
+  rs_adler32;
+  rs_inflate;
+  rs_inflateEnd;
+  rs_inflateInit2_;
 };

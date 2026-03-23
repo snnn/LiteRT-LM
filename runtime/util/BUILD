@@ -371,6 +371,17 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "rs_zlib_shim",
+    srcs = ["rs_zlib_shim.cc"],
+    deps = [
+        "@zlib//:zlib",
+    ],
+    # Ensure the shim symbols are linked into the final binary even if nothing
+    # in the repo directly references them (the prebuilt .so does).
+    alwayslink = 1,
+)
+
 cc_test(
     name = "zip_utils_test",
     srcs = ["zip_utils_test.cc"],
