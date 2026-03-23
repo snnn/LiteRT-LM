@@ -18,9 +18,12 @@ from .interfaces import AbstractBenchmark
 from .interfaces import AbstractConversation
 from .interfaces import AbstractEngine
 from .interfaces import AbstractSession
+from .interfaces import AbstractTokenizer
 from .interfaces import Backend
 from .interfaces import BenchmarkInfo
+from .interfaces import DecodeOptions
 from .interfaces import Responses
+from .interfaces import SessionOptions
 from .interfaces import ToolEventHandler
 from .litert_lm_ext import _Benchmark  # pytype: disable=import-error
 from .litert_lm_ext import _Engine  # pytype: disable=import-error
@@ -30,6 +33,7 @@ from .litert_lm_ext import Conversation  # pytype: disable=import-error
 from .litert_lm_ext import Engine  # pytype: disable=import-error
 from .litert_lm_ext import LogSeverity  # pytype: disable=import-error
 from .litert_lm_ext import Session  # pytype: disable=import-error
+from .litert_lm_ext import Tokenizer  # pytype: disable=import-error
 from .litert_lm_ext import set_min_log_severity  # pytype: disable=import-error
 from .tools import Tool
 from .tools import tool_from_function
@@ -44,22 +48,27 @@ AbstractConversation.register(Conversation)
 AbstractBenchmark.register(_Benchmark)
 BenchmarkInfo.register(_BenchmarkInfo)
 AbstractSession.register(Session)
+AbstractTokenizer.register(Tokenizer)
 
 __all__ = (
     "AbstractBenchmark",
     "AbstractConversation",
     "AbstractEngine",
     "AbstractSession",
+    "AbstractTokenizer",
     "Backend",
     "Benchmark",
     "BenchmarkInfo",
     "Conversation",
+    "DecodeOptions",
     "Engine",
     "LogSeverity",
     "Responses",
     "Session",
+    "SessionOptions",
     "Tool",
     "ToolEventHandler",
+    "Tokenizer",
     "set_min_log_severity",
     "tool_from_function",
 )

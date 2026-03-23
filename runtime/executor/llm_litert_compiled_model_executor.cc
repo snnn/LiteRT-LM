@@ -85,6 +85,10 @@ constexpr int kDynamicDimValue = -1;
 constexpr int kDefaultNumThreadsToUpload = 2;
 constexpr int kDefaultNumThreadsToCompile = 1;
 
+int GetOutputHeads(const RuntimeConfig& runtime_config) {
+  return runtime_config.output_heads.value_or(1);
+}
+
 absl::Status InitializeEmbeddingLookups(
     ModelResources& resources,
     std::unique_ptr<EmbeddingLookupManager>& embedding_lookup,
@@ -1399,6 +1403,34 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::SampleLogits(
 absl::Status LlmLiteRtCompiledModelExecutorBase::UpdateExecutorSettings(
     const LlmExecutorSettings& executor_settings) {
   executor_settings_ = executor_settings;
+  return absl::OkStatus();
+}
+
+absl::Status LlmLiteRtCompiledModelExecutorBase::UpdateRuntimeConfig(
+    const RuntimeConfig& runtime_config) {
+  const int old_output_heads = GetOutputHeads(llm_context_->runtime_config());
+  const int new_output_heads = GetOutputHeads(runtime_config);
+  if (new_output_heads <= 0) {
+    return absl::InvalidArgumentError(
+        "RuntimeConfig.output_heads must be positive.");
+  }
+  if (old_output_heads > 1 && new_output_heads > 1 &&
+      old_output_heads != new_output_heads) {
+    return absl::UnimplementedError(
+        absl::StrCat("Changing output_heads from ", old_output_heads, " to ",
+                     new_output_heads, " is not supported."));
+  }
+
+  if (old_output_heads > 1 && new_output_heads == 1) {
+    constexpr int kTokenIndexToReduce = 0;
+    RETURN_IF_ERROR(PrepareFirstPrefillAfterDecode(kTokenIndexToReduce));
+  }
+
+  llm_context_->runtime_config() = runtime_config;
+  if (old_output_heads != new_output_heads) {
+    sampler_.reset();
+    force_prepare_needed_ = new_output_heads > 1;
+  }
   return absl::OkStatus();
 }
 

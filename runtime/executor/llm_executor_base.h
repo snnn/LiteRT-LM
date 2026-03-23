@@ -107,6 +107,21 @@ class LlmExecutorBase {
         "SetCurrentStep not implemented for backend: ", ExecutorBackendName()));
   };
 
+  // Gets the runtime config of the executor.
+  virtual absl::StatusOr<RuntimeConfig> GetRuntimeConfig() const {
+    return absl::UnimplementedError(absl::StrCat(
+        "GetRuntimeConfig not implemented for backend: ",
+        ExecutorBackendName()));
+  };
+
+  // Updates the runtime config of the executor.
+  virtual absl::Status UpdateRuntimeConfig(
+      const RuntimeConfig& runtime_config) {
+    return absl::UnimplementedError(absl::StrCat(
+        "UpdateRuntimeConfig not implemented for backend: ",
+        ExecutorBackendName()));
+  }
+
   // Gets the executor settings of the executor.
   virtual absl::StatusOr<LlmExecutorSettings> GetExecutorSettings() const {
     return absl::UnimplementedError(

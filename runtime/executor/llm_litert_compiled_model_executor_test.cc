@@ -675,6 +675,69 @@ TEST(LlmLiteRtCompiledModelExecutorStaticTest,
 }
 
 TEST(LlmLiteRtCompiledModelExecutorStaticTest,
+     UpdateRuntimeConfigSwitchesDecodeLogitsBatch) {
+  const std::filesystem::path model_path =
+      std::filesystem::path(::testing::SrcDir()) /
+      "litert_lm/runtime/testdata/magic_test_decode_batch.tflite";
+  auto model_assets = ModelAssets::Create(model_path.string());
+  ASSERT_OK(model_assets);
+  auto executor_settings = LlmExecutorSettings::CreateDefault(*model_assets);
+  ASSERT_OK(executor_settings);
+  auto env = Environment::Create(std::vector<Environment::Option>());
+  ASSERT_TRUE(env);
+  TfLiteModelResources model_resources(*model_assets);
+  auto executor = LlmLiteRtCompiledModelExecutorStatic::Create(
+      std::move(*executor_settings), *env, model_resources);
+  ASSERT_OK(executor);
+  ASSERT_TRUE(*executor);
+
+  ASSERT_OK_AND_ASSIGN(auto runtime_config, (*executor)->GetRuntimeConfig());
+  ASSERT_TRUE(runtime_config.output_heads.has_value());
+  EXPECT_EQ(*runtime_config.output_heads, kMaxDecodeBatchSize);
+
+  RuntimeConfig single_head_config = runtime_config;
+  single_head_config.output_heads = 1;
+  EXPECT_OK((*executor)->UpdateRuntimeConfig(single_head_config));
+
+  ExecutorInputs inputs;
+  const std::vector<int> input_tokens = {1, 2, 3, 4, 5};
+  auto input_tokens_buffer =
+      CopyToTensorBuffer<int>(absl::MakeSpan(input_tokens), {1, 5});
+  ASSERT_TRUE(input_tokens_buffer);
+  inputs.SetTextData(ExecutorTextData(std::move(*input_tokens_buffer)));
+  EXPECT_OK((*executor)->Prefill(inputs));
+
+  RuntimeConfig multi_head_config = single_head_config;
+  multi_head_config.output_heads = kMaxDecodeBatchSize;
+  EXPECT_OK((*executor)->UpdateRuntimeConfig(multi_head_config));
+
+  ExecutorInputs decode_inputs;
+  const std::vector<int> decode_input_tokens{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+  input_tokens_buffer = CopyToTensorBuffer<int>(
+      absl::MakeSpan(decode_input_tokens), {kMaxDecodeBatchSize, 1});
+  ASSERT_TRUE(input_tokens_buffer);
+  decode_inputs.SetTextData(ExecutorTextData(std::move(*input_tokens_buffer)));
+  ASSERT_OK_AND_ASSIGN(auto logits, (*executor)->DecodeLogits(decode_inputs));
+  auto logits_type = logits.TensorType();
+  ASSERT_TRUE(logits_type);
+  EXPECT_EQ(logits_type->Layout().Dimensions(),
+            Dimensions({kMaxDecodeBatchSize, 1, kVocabSize}));
+
+  EXPECT_OK((*executor)->UpdateRuntimeConfig(single_head_config));
+  ASSERT_OK_AND_ASSIGN(auto restored_runtime_config,
+                       (*executor)->GetRuntimeConfig());
+  ASSERT_TRUE(restored_runtime_config.output_heads.has_value());
+  EXPECT_EQ(*restored_runtime_config.output_heads, 1);
+
+  ExecutorInputs inputs_next;
+  input_tokens_buffer =
+      CopyToTensorBuffer<int>(absl::MakeSpan(input_tokens.data(), 1), {1, 1});
+  ASSERT_TRUE(input_tokens_buffer);
+  inputs_next.SetTextData(ExecutorTextData(std::move(*input_tokens_buffer)));
+  EXPECT_OK((*executor)->Prefill(inputs_next));
+}
+
+TEST(LlmLiteRtCompiledModelExecutorStaticTest,
      MultipleOutput_DecodeLogits_ValidInputs) {
   const std::filesystem::path model_path =
       std::filesystem::path(::testing::SrcDir()) /

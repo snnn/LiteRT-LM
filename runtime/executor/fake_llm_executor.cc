@@ -121,6 +121,7 @@ FakeLlmExecutor::FakeLlmExecutor(
               .value()) {
   // Set default testing max num tokens to 1024.
   executor_settings_.SetMaxNumTokens(1024);
+  runtime_config_.output_heads = batch_size_;
   current_step_ = 0;
   decode_delay_ = absl::ZeroDuration();
 }
@@ -177,6 +178,7 @@ absl::StatusOr<std::vector<std::vector<int>>> FakeLlmExecutor::Decode(
     const ExecutorDecodeParams& decode_params) {
   TryDecodeDelay();
   RETURN_IF_ERROR(decode_status_);
+  ASSIGN_OR_RETURN(const int output_heads, GetOutputHeads());
   if (last_op_ == LastOp::kNone) {
     return absl::FailedPreconditionError(
         "Decode called without prior prefill or decode.");
@@ -194,7 +196,7 @@ absl::StatusOr<std::vector<std::vector<int>>> FakeLlmExecutor::Decode(
     auto constraint_decoder = decode_params.GetConstraintDecoder();
     // Get the last token ids from the last prefill or decode call.
     LITERT_ASSIGN_OR_RETURN(auto last_token_ids,
-                            CreateTensorBuffer<int>({batch_size_, 1}));
+                            CreateTensorBuffer<int>({output_heads, 1}));
     auto last_token_ids_span = ReferTensorBufferAsSpan<int>(last_token_ids);
 
     if (last_op_ == LastOp::kDecode) {
@@ -202,7 +204,7 @@ absl::StatusOr<std::vector<std::vector<int>>> FakeLlmExecutor::Decode(
         return absl::InternalError("LastOp is Decode but decode_times_ is 0");
       }
       const auto& last_decode_tokens = decode_tokens_set_[decode_times_ - 1];
-      for (int i = 0; i < batch_size_; ++i) {
+      for (int i = 0; i < output_heads; ++i) {
         (*last_token_ids_span)[i] = last_decode_tokens[i];
       }
       // Update the constraint state with the last token ids.
@@ -212,20 +214,27 @@ absl::StatusOr<std::vector<std::vector<int>>> FakeLlmExecutor::Decode(
 
     LITERT_ASSIGN_OR_RETURN(
         auto output_logits,
-        CreateTensorBuffer<float>({batch_size_, 1, vocab_size_}));
-    DecodeIdsToLogits(decode_tokens_set_[decode_times_], vocab_size_,
+        CreateTensorBuffer<float>({output_heads, 1, vocab_size_}));
+    DecodeIdsToLogits(
+        std::vector<int>(decode_tokens_set_[decode_times_].begin(),
+                         decode_tokens_set_[decode_times_].begin() +
+                             output_heads),
+        vocab_size_,
                       output_logits);
     // Apply the mask from the constraint decoder to the logits.
     RETURN_IF_ERROR(constraint_decoder->MaskLogits(output_logits));
-    output_tokens = DecodeLogitsToIds(batch_size_, vocab_size_, output_logits,
+    output_tokens = DecodeLogitsToIds(output_heads, vocab_size_, output_logits,
                                       decode_tokens_set_);
   } else {
-    for (int i = 0; i < decode_tokens_set_[decode_times_].size(); ++i) {
+    for (int i = 0; i < output_heads; ++i) {
       output_tokens.push_back({decode_tokens_set_[decode_times_][i]});
     }
   }
   last_op_ = LastOp::kDecode;
-  processed_tokens_.AddProcessedTokens(decode_tokens_set_[decode_times_]);
+  processed_tokens_.AddProcessedTokens(
+      std::vector<int>(decode_tokens_set_[decode_times_].begin(),
+                       decode_tokens_set_[decode_times_].begin() +
+                           output_heads));
   decode_times_++;
   current_step_++;
   return output_tokens;
@@ -235,6 +244,7 @@ absl::Status FakeLlmExecutor::Decode(const ExecutorInputs& inputs,
                                      ::litert::TensorBuffer& output_logits) {
   TryDecodeDelay();
   RETURN_IF_ERROR(decode_status_);
+  ASSIGN_OR_RETURN(const int output_heads, GetOutputHeads());
   if (last_op_ == LastOp::kNone) {
     return absl::FailedPreconditionError(
         "Decode called without prior prefill or decode.");
@@ -250,12 +260,21 @@ absl::Status FakeLlmExecutor::Decode(const ExecutorInputs& inputs,
     auto input_span =
         ReferTensorBufferAsSpan<int>(*(*inputs.GetTextTokenIdsPtr()));
     RETURN_IF_ERROR(CheckEquivalent(
-        absl::MakeSpan(decode_tokens_set_[decode_times_ - 1]), *input_span));
+        absl::MakeSpan(decode_tokens_set_[decode_times_ - 1])
+            .subspan(0, output_heads),
+        *input_span));
   }
-  DecodeIdsToLogits(decode_tokens_set_[decode_times_], vocab_size_,
+  DecodeIdsToLogits(
+      std::vector<int>(decode_tokens_set_[decode_times_].begin(),
+                       decode_tokens_set_[decode_times_].begin() +
+                           output_heads),
+      vocab_size_,
                     output_logits);
   last_op_ = LastOp::kDecode;
-  processed_tokens_.AddProcessedTokens(decode_tokens_set_[decode_times_]);
+  processed_tokens_.AddProcessedTokens(
+      std::vector<int>(decode_tokens_set_[decode_times_].begin(),
+                       decode_tokens_set_[decode_times_].begin() +
+                           output_heads));
   decode_times_++;
   current_step_++;
   return absl::OkStatus();
@@ -263,11 +282,23 @@ absl::Status FakeLlmExecutor::Decode(const ExecutorInputs& inputs,
 
 absl::StatusOr<::litert::TensorBuffer> FakeLlmExecutor::DecodeLogits(
     const ExecutorInputs& inputs) {
+  ASSIGN_OR_RETURN(const int output_heads, GetOutputHeads());
   LITERT_ASSIGN_OR_RETURN(
       auto output_logits,
-      CreateTensorBuffer<float>({batch_size_, 1, vocab_size_}));
+      CreateTensorBuffer<float>({output_heads, 1, vocab_size_}));
   RETURN_IF_ERROR(Decode(inputs, output_logits));
   return output_logits;
+}
+
+absl::Status FakeLlmExecutor::UpdateRuntimeConfig(
+    const RuntimeConfig& runtime_config) {
+  const int output_heads = runtime_config.output_heads.value_or(1);
+  if (output_heads <= 0) {
+    return absl::InvalidArgumentError(
+        "RuntimeConfig.output_heads must be positive.");
+  }
+  runtime_config_ = runtime_config;
+  return absl::OkStatus();
 }
 
 void FakeLlmExecutor::TryDecodeDelay() {
@@ -283,6 +314,17 @@ absl::Status FakeLlmExecutor::Reset() {
   current_step_ = 0;
   last_op_ = LastOp::kNone;
   return absl::OkStatus();
+}
+
+absl::StatusOr<int> FakeLlmExecutor::GetOutputHeads() const {
+  const int output_heads = runtime_config_.output_heads.value_or(1);
+  if (output_heads <= 0 || output_heads > batch_size_) {
+    return absl::InvalidArgumentError(
+        absl::StrCat("FakeLlmExecutor requires output_heads in [1, ",
+                     batch_size_, "], but runtime config requested ",
+                     output_heads, "."));
+  }
+  return output_heads;
 }
 
 }  // namespace litert::lm

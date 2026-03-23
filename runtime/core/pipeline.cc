@@ -140,4 +140,12 @@ absl::StatusOr<Responses> ScoreCustomSampling(
                       std::move(decoded_ids), store_token_lengths);
 }
 
+absl::StatusOr<Responses> ScoreCustomSamplingTokenIds(
+    LlmExecutor& executor, const std::vector<TokenIds>& target_token_ids,
+    const float temperature, litert::TensorBuffer decoded_ids,
+    bool store_token_lengths) {
+  return Tasks::ScoreTokenIds(executor, target_token_ids, temperature,
+                              std::move(decoded_ids), store_token_lengths);
+}
+
 }  // namespace litert::lm
