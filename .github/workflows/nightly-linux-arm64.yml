@@ -1,0 +1,56 @@
+name: "Nightly-Linux-Arm64"
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Runs at 9:00 UTC. It is
+    # - 1:00 AM Pacific Standard Time, UTC-8, or
+    # - 2:00 AM Pacific Daylight Time, UTC-7.
+    - cron: "0 9 * * *"
+
+jobs:
+  build-linux-wheel:
+    name: "Build Python Wheel ${{ matrix.python-version }}"
+    runs-on: LiteRT_Linux_ARM64
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - name: Checkout code.
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Build Python Wheel
+        run: |
+          PYTHON_VERSION=${{ matrix.python-version }}
+          DATE=$(date +'%Y%m%d')
+          bazel build \
+            --repo_env=HERMETIC_PYTHON_VERSION=${PYTHON_VERSION} \
+            --@rules_python//python/config_settings:python_version=${PYTHON_VERSION} \
+            --define=PYPI_NIGHTLY=1 \
+            --define=PYPI_NIGHTLY_DATE=${DATE} \
+            --config=linux_arm64 \
+            -c opt //python/litert_lm:litert_lm_wheel
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Test Python Wheel
+        run: |
+          PYTHON_VERSION=${{ matrix.python-version }}
+          uv venv --python=${PYTHON_VERSION}
+
+          # Install the built wheel
+          WHEEL_PATH=$(find bazel-bin/python/litert_lm -name "*.whl" | head -n 1)
+          uv pip install $WHEEL_PATH
+
+          # Run the verification script
+          uv run python python/litert_lm/examples/simple_main.py
+
+      - name: Publish to PyPI
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_UPLOAD_TOKEN }}
+        run: |
+          WHEEL_PATH=$(find bazel-bin/python/litert_lm -name "*.whl" | head -n 1)
+          uv publish $WHEEL_PATH
