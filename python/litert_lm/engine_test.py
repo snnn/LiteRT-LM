@@ -228,6 +228,19 @@ class EngineTest(LiteRtLmTestBase):
       self.assertLen(scoring_responses.scores, 1)
       self.assertEmpty(scoring_responses.token_lengths)
 
+  def test_get_tokenizer_survives_engine_exit(self):
+    with self._create_engine() as engine:
+      tokenizer = engine.get_tokenizer()
+      self.assertIsInstance(tokenizer, litert_lm.AbstractTokenizer)
+      expected_bos_token_id = tokenizer.bos_token_id
+      expected_eos_token_ids = tokenizer.eos_token_ids
+
+    token_ids = tokenizer.encode("Hello world!")
+    self.assertNotEmpty(token_ids)
+    self.assertEqual(tokenizer.bos_token_id, expected_bos_token_id)
+    self.assertEqual(tokenizer.eos_token_ids, expected_eos_token_ids)
+    self.assertIsInstance(tokenizer.decode(token_ids), str)
+
 
 class FunctionCallingTest(LiteRtLmTestBase):
 

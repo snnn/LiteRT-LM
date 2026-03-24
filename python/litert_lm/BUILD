@@ -68,6 +68,7 @@ cc_binary(
         "//runtime/engine:engine_factory",
         "//runtime/engine:engine_interface",
         "//runtime/engine:engine_settings",
+        "//runtime/executor:litert_compiled_model_executor_utils",
         "@rules_python//python/cc:current_py_cc_headers",
         "@litert//tflite:minimal_logging",
         "@litert//tflite/core/c:private_c_api_types",

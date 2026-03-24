@@ -37,6 +37,7 @@
 #include "runtime/conversation/conversation.h"
 #include "runtime/engine/engine.h"
 #include "runtime/engine/engine_factory.h"
+#include "runtime/executor/litert_compiled_model_executor_utils.h"
 #include "tflite/core/c/c_api_types.h"  // from @litert
 #include "tflite/logger.h"  // from @litert
 #include "tflite/minimal_logging.h"  // from @litert
@@ -314,49 +315,76 @@ struct PyBenchmarkInfo {
   double last_decode_tokens_per_second;
 };
 
+std::optional<int> GetBosTokenIdFromEngineSettings(
+    const EngineSettings& engine_settings) {
+  const auto& metadata = engine_settings.GetLlmMetadata();
+  if (!metadata.has_value() || !metadata->has_start_token() ||
+      !metadata->start_token().has_token_ids() ||
+      metadata->start_token().token_ids().ids_size() == 0) {
+    return std::nullopt;
+  }
+  return metadata->start_token().token_ids().ids(0);
+}
+
+std::vector<std::vector<int>> GetEosTokenIdsFromEngineSettings(
+    const EngineSettings& engine_settings) {
+  std::vector<std::vector<int>> stop_token_ids;
+  const auto& metadata = engine_settings.GetLlmMetadata();
+  if (!metadata.has_value()) {
+    return stop_token_ids;
+  }
+  stop_token_ids.reserve(metadata->stop_tokens_size());
+  for (const auto& stop_token : metadata->stop_tokens()) {
+    if (!stop_token.has_token_ids()) {
+      continue;
+    }
+    stop_token_ids.emplace_back(stop_token.token_ids().ids().begin(),
+                                stop_token.token_ids().ids().end());
+  }
+  return stop_token_ids;
+}
+
+absl::StatusOr<std::unique_ptr<Tokenizer>> CreateTokenizerFromEngine(
+    const Engine& engine) {
+  const auto& model_assets =
+      engine.GetEngineSettings().GetMainExecutorSettings().GetModelAssets();
+  ASSIGN_OR_RETURN(auto model_resources,
+                   BuildLiteRtCompiledModelResources(model_assets));
+  return model_resources->GetTokenizer();
+}
+
 class PyTokenizer {
  public:
-  explicit PyTokenizer(Engine* engine) : engine_(engine) {}
+  PyTokenizer(std::unique_ptr<Tokenizer> tokenizer,
+              std::optional<int> bos_token_id,
+              std::vector<std::vector<int>> eos_token_ids)
+      : tokenizer_(std::move(tokenizer)),
+        bos_token_id_(bos_token_id),
+        eos_token_ids_(std::move(eos_token_ids)) {}
+
+  PyTokenizer(const PyTokenizer&) = delete;
+  PyTokenizer& operator=(const PyTokenizer&) = delete;
+  PyTokenizer(PyTokenizer&&) = default;
+  PyTokenizer& operator=(PyTokenizer&&) = default;
 
   std::vector<int> Encode(std::string_view text) {
-    Tokenizer& tokenizer = const_cast<Tokenizer&>(engine_->GetTokenizer());
-    return VALUE_OR_THROW(tokenizer.TextToTokenIds(text));
+    return VALUE_OR_THROW(tokenizer_->TextToTokenIds(text));
   }
 
   std::string Decode(const std::vector<int>& token_ids) {
-    Tokenizer& tokenizer = const_cast<Tokenizer&>(engine_->GetTokenizer());
-    return VALUE_OR_THROW(tokenizer.TokenIdsToText(token_ids));
+    return VALUE_OR_THROW(tokenizer_->TokenIdsToText(token_ids));
   }
 
-  std::optional<int> GetBosTokenId() const {
-    const auto& metadata = engine_->GetEngineSettings().GetLlmMetadata();
-    if (!metadata.has_value() || !metadata->has_start_token() ||
-        !metadata->start_token().has_token_ids() ||
-        metadata->start_token().token_ids().ids_size() == 0) {
-      return std::nullopt;
-    }
-    return metadata->start_token().token_ids().ids(0);
-  }
+  std::optional<int> GetBosTokenId() const { return bos_token_id_; }
 
-  std::vector<std::vector<int>> GetEosTokenIds() const {
-    std::vector<std::vector<int>> stop_token_ids;
-    const auto& metadata = engine_->GetEngineSettings().GetLlmMetadata();
-    if (!metadata.has_value()) {
-      return stop_token_ids;
-    }
-    stop_token_ids.reserve(metadata->stop_tokens_size());
-    for (const auto& stop_token : metadata->stop_tokens()) {
-      if (!stop_token.has_token_ids()) {
-        continue;
-      }
-      stop_token_ids.emplace_back(stop_token.token_ids().ids().begin(),
-                                  stop_token.token_ids().ids().end());
-    }
-    return stop_token_ids;
+  const std::vector<std::vector<int>>& GetEosTokenIds() const {
+    return eos_token_ids_;
   }
 
  private:
-  Engine* engine_;
+  std::unique_ptr<Tokenizer> tokenizer_;
+  std::optional<int> bos_token_id_;
+  std::vector<std::vector<int>> eos_token_ids_;
 };
 
 class Benchmark {
@@ -647,8 +675,11 @@ NB_MODULE(litert_lm_ext, module) {
           "Creates a new session for this engine.")
       .def(
           "get_tokenizer",
-          [](const nb::object& self) {
-            return PyTokenizer(&nb::cast<Engine&>(self));
+          [](const Engine& self) {
+            return std::make_unique<PyTokenizer>(
+                VALUE_OR_THROW(CreateTokenizerFromEngine(self)),
+                GetBosTokenIdFromEngineSettings(self.GetEngineSettings()),
+                GetEosTokenIdsFromEngineSettings(self.GetEngineSettings()));
           },
           "Returns the tokenizer associated with this engine.");
 
@@ -822,32 +853,12 @@ NB_MODULE(litert_lm_ext, module) {
             };
             auto state = std::make_shared<AsyncState>();
 
-            struct PythonCallbackState {
-              explicit PythonCallbackState(nb::object self_obj,
-                                           nb::dict tool_map_obj,
-                                           nb::object tool_event_handler_obj)
-                  : self(std::move(self_obj)),
-                    tool_map(std::move(tool_map_obj)),
-                    tool_event_handler(std::move(tool_event_handler_obj)) {}
-
-              ~PythonCallbackState() {
-                nb::gil_scoped_acquire acquire;
-                self = nb::object();
-                tool_map = nb::dict();
-                tool_event_handler = nb::object();
-              }
-
+            struct Callback {
               nb::object self;
+              std::shared_ptr<MessageIterator> iterator;
               nb::dict tool_map;
               nb::object tool_event_handler;
-            };
-            auto python_state = std::make_shared<PythonCallbackState>(
-                self, tool_map, tool_event_handler);
-
-            struct Callback {
-              std::shared_ptr<MessageIterator> iterator;
               std::shared_ptr<AsyncState> state;
-              std::shared_ptr<PythonCallbackState> python_state;
 
               void operator()(absl::StatusOr<Message> message) const {
                 if (!message.ok()) {
@@ -866,9 +877,8 @@ NB_MODULE(litert_lm_ext, module) {
                 if (json_msg.contains("tool_calls") &&
                     !json_msg["tool_calls"].empty()) {
                   nb::gil_scoped_acquire acquire;
-                  state->pending_tool_response = HandleToolCalls(
-                      json_msg, python_state->tool_map,
-                      python_state->tool_event_handler);
+                  state->pending_tool_response =
+                      HandleToolCalls(json_msg, tool_map, tool_event_handler);
                 }
 
                 if (json_msg.contains("content")) {
@@ -887,8 +897,7 @@ NB_MODULE(litert_lm_ext, module) {
                     state->pending_tool_response = nullptr;
 
                     nb::gil_scoped_acquire acquire;
-                    Conversation& conv =
-                        nb::cast<Conversation&>(python_state->self);
+                    Conversation& conv = nb::cast<Conversation&>(self);
                     absl::Status status =
                         conv.SendMessageAsync(next_message, *this);
                     if (!status.ok()) {
@@ -902,7 +911,8 @@ NB_MODULE(litert_lm_ext, module) {
             };
 
             absl::Status status = conversation.SendMessageAsync(
-                json_message, Callback{iterator, state, python_state});
+                json_message,
+                Callback{self, iterator, tool_map, tool_event_handler, state});
 
             if (!status.ok()) {
               std::stringstream error_msg_stream;
