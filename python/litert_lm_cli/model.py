@@ -21,6 +21,7 @@ import inspect
 import json
 import os
 import pathlib
+import readline  # pylint: disable=unused-import
 import traceback
 import litert_lm
 
