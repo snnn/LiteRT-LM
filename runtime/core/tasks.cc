@@ -490,7 +490,7 @@ absl::StatusOr<Responses> Decode(
       }
     }
 
-    if (is_streaming && any_updates && !*all_done) {
+    if (is_streaming && any_updates) {
       callback(Responses(TaskState::kProcessing, std::move(step_texts),
                          std::move(step_scores)));
     }
