@@ -132,8 +132,15 @@ template <typename T>
       ::litert::TensorBufferScopedLock::Create(
           *const_cast<::litert::TensorBuffer*>(&tensor_buffer),
           TensorBuffer::LockMode::kRead));
-  std::memcpy(copied_data.data(), lock_and_addr.second,
-              num_elements * sizeof(T));
+  // Note: std::vector of bool is specialized to require fewer bits per element
+  // and is not compatible with a direct memcpy.
+  if constexpr (std::is_same_v<T, bool>) {
+    auto* src = static_cast<const bool*>(lock_and_addr.second);
+    std::copy(src, src + num_elements, copied_data.begin());
+  } else {
+    std::memcpy(copied_data.data(), lock_and_addr.second,
+                num_elements * sizeof(T));
+  }
   return copied_data;
 }
 
@@ -348,7 +355,7 @@ template <typename T>
       int dst_offset =
           i * next_dims_size * target_dims_size + j * next_dims_size;
       int src_offset = i * next_dims_size * target_dims_size +
-                     (j + num_tokens_to_drop) * next_dims_size;
+                       (j + num_tokens_to_drop) * next_dims_size;
       std::memcpy(target_ptr + dst_offset, target_ptr + src_offset,
                   next_dims_size * sizeof(T));
     }

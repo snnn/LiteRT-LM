@@ -43,6 +43,8 @@ if(NOT EXISTS "${ABSL_CONFIG_CMAKE_FILE}")
       -P "${ABSL_PACKAGE_DIR}/absl_patcher.cmake"
 
     CMAKE_ARGS
+      ${LITERTLM_TOOLCHAIN_FILE}
+      ${LITERTLM_TOOLCHAIN_ARGS}
       -DCMAKE_INSTALL_PREFIX=${ABSL_INSTALL_PREFIX}
       -DCMAKE_INSTALL_LIBDIR=lib
       -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
@@ -57,10 +59,7 @@ if(NOT EXISTS "${ABSL_CONFIG_CMAKE_FILE}")
       -DABSL_PROPAGATE_CXX_STD=ON
       -DBUILD_SHARED_LIBS=OFF
 
-    STEP_TARGETS
-      verify_install_step
   )
-  verify_install(absl_external ${ABSL_CONFIG_CMAKE_FILE})
 else()
   message(STATUS "Abseil already installed at: ${ABSL_INSTALL_PREFIX}")
   if(NOT TARGET absl_external)

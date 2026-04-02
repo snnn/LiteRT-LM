@@ -39,6 +39,7 @@ internal object LiteRtLmJni {
    * @param enableBenchmark Whether to enable benchmark mode or not.
    * @param cacheDir The directory for cache files.
    * @param enableBenchmark Whether to enable benchmark or not.
+   * @param enableSpeculativeDecoding Whether to enable speculative decoding.
    * @param mainNpuNativeLibraryDir The directory for the main backend NPU libraries.
    * @param visionNpuNativeLibraryDir The directory for the vision backend NPU libraries.
    * @param audioNpuNativeLibraryDir The directory for the audio backend NPU libraries.
@@ -54,6 +55,7 @@ internal object LiteRtLmJni {
     maxNumTokens: Int,
     cacheDir: String,
     enableBenchmark: Boolean,
+    enableSpeculativeDecoding: Boolean,
     mainNpuNativeLibraryDir: String,
     visionNpuNativeLibraryDir: String,
     audioNpuNativeLibraryDir: String,
@@ -186,6 +188,8 @@ internal object LiteRtLmJni {
    * @param systemMessageJsonString The system instruction to be used in the conversation.
    * @param toolsDescriptionJsonString A json string of a list of tool definitions (Open API json).
    *   could be used.
+   * @param channelsJsonString A json string of a list of channel definitions. If null, use the
+   *   default from the model or engine. If empty, channels will be disabled.
    * @param enableConversationConstrainedDecoding Whether to enable conversation constrained
    *   decoding.
    * @return A pointer to the native conversation instance.
@@ -195,6 +199,7 @@ internal object LiteRtLmJni {
     samplerConfig: SamplerConfig?,
     messageJsonString: String,
     toolsDescriptionJsonString: String,
+    channelsJsonString: String?,
     enableConversationConstrainedDecoding: Boolean,
   ): Long
 

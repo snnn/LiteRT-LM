@@ -63,6 +63,8 @@ cc_library(
             "@litert//litert/cc:litert_options",
             "@litert//litert/cc:litert_ranked_tensor_type",
             "@litert//litert/cc:litert_tensor_buffer",
+            "@litert//litert/cc/internal:litert_handle",
+            "@litert//litert/cc/options:litert_qualcomm_options",
         ],
     }),
 )
@@ -127,6 +129,8 @@ cc_library(
             "@litert//litert/cc:litert_model",
             "@litert//litert/cc:litert_options",
             "@litert//litert/cc:litert_tensor_buffer",
+            "@litert//litert/cc/internal:litert_handle",
+            "@litert//litert/cc/options:litert_qualcomm_options",
         ],
     }),
 )
@@ -158,6 +162,7 @@ cc_library(
             "@litert//litert/cc:litert_api_with_dynamic_runtime",
         ],
         "//conditions:default": [
+            "@litert//litert/cc:litert_environment",
             "@litert//litert/cc:litert_model",
             "@litert//litert/cc:litert_tensor_buffer",
         ],

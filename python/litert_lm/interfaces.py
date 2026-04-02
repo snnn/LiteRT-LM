@@ -20,7 +20,6 @@ import abc
 import collections.abc
 import dataclasses
 import enum
-import pathlib
 from typing import Any
 
 
@@ -30,7 +29,6 @@ class Backend(enum.Enum):
   UNSPECIFIED = 0
   CPU = 3
   GPU = 4
-  NPU = 6
 
 
 class ToolEventHandler(abc.ABC):
@@ -64,44 +62,6 @@ class ToolEventHandler(abc.ABC):
     """
 
 
-@dataclasses.dataclass
-class SessionOptions:
-  """Options applied when a new low-level session is created."""
-
-  apply_prompt_template_in_session: bool | None = None
-  max_output_tokens: int | None = None
-  num_output_candidates: int | None = None
-
-
-@dataclasses.dataclass
-class DecodeOptions:
-  """Options applied to a single decode request."""
-
-  max_output_tokens: int | None = None
-
-
-class AbstractTokenizer(abc.ABC):
-  """Tokenizer interface exposed by LiteRT-LM."""
-
-  @abc.abstractmethod
-  def encode(self, text: str) -> list[int]:
-    """Encodes text into token ids."""
-
-  @abc.abstractmethod
-  def decode(self, token_ids: list[int]) -> str:
-    """Decodes token ids back to text."""
-
-  @property
-  @abc.abstractmethod
-  def bos_token_id(self) -> int | None:
-    """Returns the configured BOS token id if present."""
-
-  @property
-  @abc.abstractmethod
-  def eos_token_ids(self) -> list[list[int]]:
-    """Returns the configured stop token ids."""
-
-
 @dataclasses.dataclass(kw_only=True)
 class AbstractEngine(abc.ABC):
   """Abstract base class for LiteRT-LM engines.
@@ -111,12 +71,21 @@ class AbstractEngine(abc.ABC):
       backend: The hardware backend used for inference.
       max_num_tokens: Maximum number of tokens for the KV cache.
       cache_dir: Directory for caching compiled model artifacts.
+      vision_backend: The hardware backend used for vision encoding.
+      audio_backend: The hardware backend used for audio encoding.
+      enable_speculative_decoding: Whether to enable speculative decoding. If
+        None, use the model's default. If True, enable speculative decoding; an
+        error will be thrown if the model does not support it. If False, disable
+        it.
   """
 
   model_path: str
   backend: Backend
   max_num_tokens: int = 4096
   cache_dir: str = ""
+  vision_backend: Backend | None = None
+  audio_backend: Backend | None = None
+  enable_speculative_decoding: bool | None = None
 
   def __enter__(self) -> AbstractEngine:
     """Initializes the engine resources."""
@@ -137,6 +106,7 @@ class AbstractEngine(abc.ABC):
           collections.abc.Sequence[collections.abc.Callable[..., Any]] | None
       ) = None,
       tool_event_handler: ToolEventHandler | None = None,
+      extra_context: collections.abc.Mapping[str, Any] | None = None,
   ) -> AbstractConversation:
     """Creates a new conversation for this engine.
 
@@ -145,21 +115,22 @@ class AbstractEngine(abc.ABC):
           message is a mapping that should contain 'role' and 'content' keys.
         tools: A list of Python functions to be used as tools.
         tool_event_handler: A handler for tool call and tool response events.
+        extra_context: Extra context for the conversation.
     """
 
   @abc.abstractmethod
   def create_session(
-      self, options: SessionOptions | None = None
+      self, *, apply_prompt_template: bool = True
   ) -> AbstractSession:
     """Creates a new session for this engine.
+
+    Args:
+        apply_prompt_template: Whether to apply the basic prompt templates in
+          the session.
 
     Returns:
         A new session instance for low-level interaction with the model.
     """
-
-  @abc.abstractmethod
-  def get_tokenizer(self) -> AbstractTokenizer:
-    """Returns the tokenizer associated with this engine."""
 
 
 class AbstractConversation(abc.ABC):
@@ -169,6 +140,7 @@ class AbstractConversation(abc.ABC):
       messages: A sequence of messages for the conversation preface.
       tools: A list of Python functions to be used as tools.
       tool_event_handler: A handler for tool call and tool response events.
+      extra_context: Extra context for the chat template.
   """
 
   def __init__(
@@ -181,6 +153,7 @@ class AbstractConversation(abc.ABC):
           collections.abc.Sequence[collections.abc.Callable[..., Any]] | None
       ) = None,
       tool_event_handler: ToolEventHandler | None = None,
+      extra_context: collections.abc.Mapping[str, Any] | None = None,
   ):
     """Initializes the instance.
 
@@ -189,10 +162,12 @@ class AbstractConversation(abc.ABC):
           message is a mapping that should contain 'role' and 'content' keys.
         tools: A list of Python functions to be used as tools.
         tool_event_handler: A handler for tool call and tool response events.
+        extra_context: Extra context for the chat template.
     """
     self.messages = messages or []
     self.tools = tools or []
     self.tool_event_handler = tool_event_handler
+    self.extra_context = extra_context or {}
 
   def __enter__(self) -> AbstractConversation:
     """Initializes the conversation."""
@@ -270,6 +245,10 @@ class AbstractBenchmark(abc.ABC):
       prefill_tokens: Number of tokens for the prefill phase.
       decode_tokens: Number of tokens for the decode phase.
       cache_dir: Directory for caching compiled model artifacts.
+      enable_speculative_decoding: Whether to enable speculative decoding. If
+        None, use the model's default. If True, enable speculative decoding; an
+        error will be thrown if the model does not support it. If False, disable
+        it.
   """
 
   model_path: str
@@ -277,6 +256,7 @@ class AbstractBenchmark(abc.ABC):
   prefill_tokens: int = 256
   decode_tokens: int = 256
   cache_dir: str = ""
+  enable_speculative_decoding: bool | None = None
 
   @abc.abstractmethod
   def run(self) -> BenchmarkInfo:
@@ -301,19 +281,11 @@ class Responses:
         length is equal to length of the "target_text" in "run_text_scoring".
         This field is only used in `run_text_scoring` when `store_token_lengths`
         is True.
-      token_scores: The per-token log likelihoods for each scored target.
-      token_ids: The raw generated token ids for each decoded candidate.
-      greedy_token_ids: The greedy token ids seen during scoring.
-      finish_reasons: The decode finish reason for each candidate.
   """
 
   texts: list[str] = dataclasses.field(default_factory=list)
   scores: list[float] = dataclasses.field(default_factory=list)
   token_lengths: list[int] = dataclasses.field(default_factory=list)
-  token_scores: list[list[float]] = dataclasses.field(default_factory=list)
-  token_ids: list[list[int]] = dataclasses.field(default_factory=list)
-  greedy_token_ids: list[list[int]] = dataclasses.field(default_factory=list)
-  finish_reasons: list[str] = dataclasses.field(default_factory=list)
 
 
 # TODO(b/482060476): Add clone() API once switching to advanced engine.
@@ -344,16 +316,20 @@ class AbstractSession(abc.ABC):
     """
 
   @abc.abstractmethod
-  def run_prefill_token_ids(self, token_ids: list[int]) -> None:
-    """Runs prefill with already-tokenized text."""
-
-  @abc.abstractmethod
-  def run_decode(self, options: DecodeOptions | None = None) -> Responses:
+  def run_decode(self) -> Responses:
     """Runs the decode stage of the session.
 
     Returns:
         The generated response from the model based on the input prompt/query
         added after using run_prefill.
+    """
+
+  @abc.abstractmethod
+  def run_decode_async(self) -> collections.abc.Iterator[Responses]:
+    """Runs the decode stage of the session asynchronously.
+
+    Returns:
+        An iterator yielding chunks of the generated response (Responses).
     """
 
   @abc.abstractmethod
@@ -374,9 +350,5 @@ class AbstractSession(abc.ABC):
     """
 
   @abc.abstractmethod
-  def run_token_scoring(
-      self,
-      target_token_ids: list[list[int]],
-      store_token_lengths: bool = False,
-  ) -> Responses:
-    """Runs the scoring stage on already-tokenized targets."""
+  def cancel_process(self) -> None:
+    """Cancels the ongoing inference process."""

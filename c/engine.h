@@ -437,12 +437,14 @@ void litert_lm_conversation_delete(LiteRtLmConversation* conversation);
 //
 // @param conversation The conversation to use.
 // @param message_json A JSON string representing the message to send.
+// @param extra_context A JSON string representing the extra context to use.
 // @return A pointer to the JSON response, or NULL on failure. The caller is
 //   responsible for deleting the response using
 //   `litert_lm_json_response_delete`.
 LITERT_LM_C_API_EXPORT
 LiteRtLmJsonResponse* litert_lm_conversation_send_message(
-    LiteRtLmConversation* conversation, const char* message_json);
+    LiteRtLmConversation* conversation, const char* message_json,
+    const char* extra_context);
 
 // Destroys a LiteRT LM Json Response object.
 //
@@ -466,6 +468,7 @@ const char* litert_lm_json_response_get_string(
 //
 // @param conversation The conversation to use.
 // @param message_json A JSON string representing the message to send.
+// @param extra_context A JSON string representing the extra context to use.
 // @param callback The callback function to receive response chunks.
 // @param callback_data A pointer to user data that will be passed to the
 // callback.
@@ -473,7 +476,8 @@ const char* litert_lm_json_response_get_string(
 LITERT_LM_C_API_EXPORT
 int litert_lm_conversation_send_message_stream(
     LiteRtLmConversation* conversation, const char* message_json,
-    LiteRtLmStreamCallback callback, void* callback_data);
+    const char* extra_context, LiteRtLmStreamCallback callback,
+    void* callback_data);
 
 // Cancels the ongoing inference process, for asynchronous inference.
 //

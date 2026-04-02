@@ -248,6 +248,11 @@ class ExecutorVisionData {
   void SetPerLayerEmbeddings(
       std::optional<::litert::TensorBuffer>&& per_layer_embeddings);
 
+  // Duplicates the ExecutorVisionData. This method relies on the
+  // TensorBuffer::Duplicate method to duplicate the underlying TensorBuffers.
+  // As such, the underlying buffers are shallow copied.
+  absl::StatusOr<ExecutorVisionData> Duplicate() const;
+
  private:
   std::optional<::litert::TensorBuffer> embeddings_;
   std::optional<::litert::TensorBuffer> per_layer_embeddings_;
@@ -304,6 +309,11 @@ class ExecutorAudioData {
   void SetPerLayerEmbeddings(
       std::optional<::litert::TensorBuffer>&& per_layer_embeddings);
   void SetValidTokens(int valid_tokens);
+
+  // Duplicates the ExecutorAudioData. This method relies on the
+  // TensorBuffer::Duplicate method to duplicate the underlying TensorBuffers.
+  // As such, the underlying buffers are shallow copied.
+  absl::StatusOr<ExecutorAudioData> Duplicate() const;
 
  private:
   std::optional<::litert::TensorBuffer> embeddings_;

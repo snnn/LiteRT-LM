@@ -90,6 +90,18 @@ CreateConversationCallback(LiteRtLmStreamCallback callback, void* user_data) {
   };
 }
 
+litert::lm::OptionalArgs CreateOptionalArgs(const char* extra_context) {
+  litert::lm::OptionalArgs optional_args;
+  if (extra_context) {
+    auto extra_context_json =
+        nlohmann::ordered_json::parse(extra_context, nullptr, false);
+    if (!extra_context_json.is_null() && !extra_context_json.empty()) {
+      optional_args.extra_context = extra_context_json;
+    }
+  }
+  return optional_args;
+}
+
 }  // namespace
 
 using ::litert::lm::Conversation;
@@ -679,7 +691,8 @@ void litert_lm_conversation_delete(LiteRtLmConversation* conversation) {
 }
 
 LiteRtLmJsonResponse* litert_lm_conversation_send_message(
-    LiteRtLmConversation* conversation, const char* message_json) {
+    LiteRtLmConversation* conversation, const char* message_json,
+    const char* extra_context) {
   if (!conversation || !conversation->conversation) {
     return nullptr;
   }
@@ -690,7 +703,11 @@ LiteRtLmJsonResponse* litert_lm_conversation_send_message(
     ABSL_LOG(ERROR) << "Failed to parse message JSON.";
     return nullptr;
   }
-  auto response = conversation->conversation->SendMessage(json_message);
+
+  litert::lm::OptionalArgs optional_args = CreateOptionalArgs(extra_context);
+
+  auto response = conversation->conversation->SendMessage(
+      json_message, std::move(optional_args));
   if (!response.ok()) {
     ABSL_LOG(ERROR) << "Failed to send message: " << response.status();
     return nullptr;
@@ -719,7 +736,8 @@ const char* litert_lm_json_response_get_string(
 
 int litert_lm_conversation_send_message_stream(
     LiteRtLmConversation* conversation, const char* message_json,
-    LiteRtLmStreamCallback callback, void* callback_data) {
+    const char* extra_context, LiteRtLmStreamCallback callback,
+    void* callback_data) {
   if (!conversation || !conversation->conversation) {
     return -1;
   }
@@ -731,8 +749,11 @@ int litert_lm_conversation_send_message_stream(
     return -1;
   }
 
+  litert::lm::OptionalArgs optional_args = CreateOptionalArgs(extra_context);
+
   absl::Status status = conversation->conversation->SendMessageAsync(
-      json_message, CreateConversationCallback(callback, callback_data));
+      json_message, CreateConversationCallback(callback, callback_data),
+      std::move(optional_args));
 
   if (!status.ok()) {
     ABSL_LOG(ERROR) << "Failed to start message stream: " << status;

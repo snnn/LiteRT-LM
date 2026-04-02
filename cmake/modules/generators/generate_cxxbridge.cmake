@@ -15,21 +15,30 @@
 
 # --- RUST ---
 set(LITERTLM_RUST_FILES
-    "${PROJECT_ROOT}/runtime/components/rust/minijinja_template.rs"
-    "${PROJECT_ROOT}/runtime/components/tool_use/rust/parsers.rs"
+    "${LITERTLM_PROJECT_ROOT}/runtime/components/rust/minijinja_template.rs"
+    "${LITERTLM_PROJECT_ROOT}/runtime/components/tool_use/rust/parsers.rs"
 
     CACHE INTERNAL "Rust files to include in the cxx bridge"
 )
 set(LITERTLM_RUST_BRIDGE_FILES "")
 
 foreach(RS_FILE IN LISTS LITERTLM_RUST_FILES)
-    file(RELATIVE_PATH REL_RS "${PROJECT_ROOT}" "${RS_FILE}")
+    file(RELATIVE_PATH REL_RS "${LITERTLM_PROJECT_ROOT}" "${RS_FILE}")
 
     list(APPEND LITERTLM_RUST_BRIDGE_FILES "../${REL_RS}")
 endforeach()
 
 # --- CORROSION SETUP ---
 corrosion_import_crate(MANIFEST_PATH "${LITERTLM_CARGO_TOML}")
+
+if(DEFINED LITERTLM_RUST_LINKER_OVERRIDE)
+    if(TARGET litert_lm_deps)
+        corrosion_set_linker(litert_lm_deps "${LITERTLM_RUST_LINKER_OVERRIDE}")
+        message(STATUS "[LiteRTLM] Hard-wiring litert_lm_deps linker to ${LITERTLM_RUST_LINKER_OVERRIDE}")
+    else()
+        message(WARNING "[LiteRTLM] Target 'litert_lm_deps' not found. Linker override failed.")
+    endif()
+endif()
 
 corrosion_add_cxxbridge(
     litertlm_cxx_bridge
@@ -42,7 +51,7 @@ set(CORROSION_INC_DIR "${CMAKE_BINARY_DIR}/corrosion_generated/cxxbridge/litertl
 foreach(RS_FILE IN LISTS LITERTLM_RUST_FILES)
     get_filename_component(RS_NAME ${RS_FILE} NAME_WE)
     get_filename_component(RS_DIR ${RS_FILE} DIRECTORY)
-    file(RELATIVE_PATH REL_PATH "${PROJECT_ROOT}" "${RS_DIR}")
+    file(RELATIVE_PATH REL_PATH "${LITERTLM_PROJECT_ROOT}" "${RS_DIR}")
 
     set(CORROSION_HEADER "${CORROSION_INC_DIR}/${REL_PATH}/${RS_NAME}.h")
 
@@ -61,7 +70,6 @@ endforeach()
 add_custom_target(litertlm_cxx_bridge_aliases ALL DEPENDS ${LITERTLM_BRIDGE_ALIASES})
 add_dependencies(litertlm_cxx_bridge_aliases litertlm_cxx_bridge)
 
-
 add_custom_command(
     TARGET litertlm_cxx_bridge POST_BUILD
     COMMAND ${CMAKE_COMMAND}
@@ -70,13 +78,11 @@ add_custom_command(
     COMMENT "Scanning Cargo build artifacts for libcxxbridge1.a"
 )
 
-
 set(_cxxbridge_paths
     "${CMAKE_BINARY_DIR}/liblitertlm_cxx_bridge.a"
     "${CMAKE_BINARY_DIR}/liblitert_lm_deps.a"
     "${CMAKE_BINARY_DIR}/libcxxbridge1.a"
 )
-
 
 if(NOT TARGET LiteRTLM::CxxBridge::Aggregate)
     message(STATUS "[LiteRTLM] Generating CxxBridge Aggregate...")
@@ -91,7 +97,6 @@ if(NOT TARGET LiteRTLM::CxxBridge::Aggregate)
             "${ABSL_INCLUDE_DIR}"
     )
     add_dependencies(LiteRTLM::CxxBridge::Aggregate litertlm_cxx_bridge)
-
     get_target_property(_CXXBRIDGE_PAYLOAD LiteRTLM::CxxBridge::Aggregate INTERFACE_LINK_LIBRARIES)
 
     string(REPLACE ";" " " _CXXBRIDGE_LINK_FLAGS "${_CXXBRIDGE_LINK_FLAGS}")

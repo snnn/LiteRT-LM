@@ -125,6 +125,13 @@ class EngineSettings {
   // created and returned.
   proto::LlmMetadata& GetMutableLlmMetadata();
 
+  // Returns true if the engine may load different sections of the litertlm file
+  // in parallel.
+  bool GetParallelFileSectionLoading() const;
+  // Sets whether the engine should load different sections of the litertlm file
+  // in parallel.
+  void SetParallelFileSectionLoading(bool parallel_file_section_loading);
+
  private:
   explicit EngineSettings(
       LlmExecutorSettings executor_settings,
@@ -147,6 +154,10 @@ class EngineSettings {
   // Default metadata for the model. This is loaded from the model assets (if
   // present).
   std::optional<proto::LlmMetadata> metadata_;
+
+  // Whether the engine should load different sections of the litertlm file in
+  // parallel.
+  bool parallel_file_section_loading_ = true;
 };
 std::ostream& operator<<(std::ostream& os, const EngineSettings& settings);
 

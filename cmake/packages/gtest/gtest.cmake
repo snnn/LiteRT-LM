@@ -13,12 +13,29 @@
 # limitations under the License.
 
 
+# [TODO] Update to follow the same pattern as the other packages.
 include(ExternalProject)
 
 set(GTEST_EXT_PREFIX ${EXTERNAL_PROJECT_BINARY_DIR}/googletest)
 set(GTEST_INSTALL_PREFIX ${GTEST_EXT_PREFIX}/install)
 set(GTEST_INCLUDE_DIR ${GTEST_INSTALL_PREFIX}/include)
 set(GTEST_CONFIG_CMAKE_FILE "${GTEST_INSTALL_PREFIX}/lib/cmake/GTest/GTestConfig.cmake")
+
+set(absl_DIR "${ABSL_INSTALL_PREFIX}/lib/cmake/absl" CACHE PATH "Path to absl config")
+set(ABSL_DIR "${ABSL_INSTALL_PREFIX}/lib/cmake/absl" CACHE PATH "Path to absl config")
+set(absl_ROOT "${ABSL_INSTALL_PREFIX}" CACHE PATH "absl root dir")
+set(ABSL_ROOT "${ABSL_INSTALL_PREFIX}" CACHE PATH "absl root dir")
+
+list(APPEND CMAKE_PREFIX_PATH "${ABSL_INSTALL_PREFIX}")
+list(APPEND CMAKE_SYSTEM_PREFIX_PATH "${ABSL_INSTALL_PREFIX}")
+
+set(ABSL_INCLUDE_DIR "${ABSL_INSTALL_PREFIX}/include" CACHE PATH "absl include dir")
+set(ABSL_INCLUDE_DIRS "${ABSL_INSTALL_PREFIX}/include" CACHE PATH "absl include dirs")
+set(absl_INCLUDE_DIR "${ABSL_INSTALL_PREFIX}/include" CACHE PATH "absl include dir")
+set(absl_INCLUDE_DIRS "${ABSL_INSTALL_PREFIX}/include" CACHE PATH "absl include dirs")
+set(ABSL_LIBRARY_DIR "${ABSL_INSTALL_PREFIX}/lib" CACHE PATH "absl lib dir")
+set(ABSL_LIB_DIR "${ABSL_INSTALL_PREFIX}/lib" CACHE PATH "absl lib dir")
+set(absl_LIBRARY_DIR "${ABSL_INSTALL_PREFIX}/lib" CACHE PATH "absl lib dir")
 
 setup_external_install_structure("${GTEST_INSTALL_PREFIX}")
 
@@ -38,6 +55,8 @@ if(NOT EXISTS "${GTEST_CONFIG_CMAKE_FILE}")
     PATCH_COMMAND
       git checkout -- . && git clean -df
     CMAKE_ARGS
+      ${LITERTLM_TOOLCHAIN_FILE}
+      ${LITERTLM_TOOLCHAIN_ARGS}
       -DCMAKE_PREFIX_PATH=${ABSL_INSTALL_PREFIX}
       -DCMAKE_INSTALL_PREFIX=${GTEST_INSTALL_PREFIX}
       -DCMAKE_INSTALL_LIBDIR=lib
@@ -47,11 +66,18 @@ if(NOT EXISTS "${GTEST_CONFIG_CMAKE_FILE}")
       -DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}
       -DCMAKE_CXX_COMPILER=${CMAKE_CXX_COMPILER}
       -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-
-    STEP_TARGETS
-      step_verify_install
+      -Dabsl_DIR=${absl_DIR}
+      -DABSL_DIR=${ABSL_DIR}
+      -Dabsl_ROOT=${absl_ROOT}
+      -DABSL_ROOT=${ABSL_ROOT}
+      -DABSL_INCLUDE_DIR=${ABSL_INCLUDE_DIR}
+      -DABSL_INCLUDE_DIRS=${ABSL_INCLUDE_DIRS}
+      -Dabsl_INCLUDE_DIR=${absl_INCLUDE_DIR}
+      -Dabsl_INCLUDE_DIRS=${absl_INCLUDE_DIRS}
+      -DABSL_LIBRARY_DIR=${ABSL_LIBRARY_DIR}
+      -DABSL_LIB_DIR=${ABSL_LIB_DIR}
+      -Dabsl_LIBRARY_DIR=${absl_LIBRARY_DIR}
   )
-  verify_install(gtest_external ${GTEST_CONFIG_CMAKE_FILE})
 
 else()
     message(STATUS "GoogleTest already installed at: ${GTEST_INSTALL_PREFIX}")
@@ -60,12 +86,10 @@ else()
     endif()
 endif()
 
-
 import_static_lib(imp_gmock                      "${GTEST_LIB_DIR}/libgmock.a")
 import_static_lib(imp_gmock_main                 "${GTEST_LIB_DIR}/libgmock_main.a")
 import_static_lib(imp_gtest                      "${GTEST_LIB_DIR}/libgtest.a")
 import_static_lib(imp_gtest_main                 "${GTEST_LIB_DIR}/libgtest_main.a")
-
 
 add_library(gtest_libs INTERFACE)
 target_link_libraries(gtest_libs INTERFACE

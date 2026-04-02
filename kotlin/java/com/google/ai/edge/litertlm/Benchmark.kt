@@ -68,7 +68,7 @@ fun benchmark(
       prefillTokens,
       decodeTokens,
       cacheDir ?: "",
-      (backend as? Backend.NPU)?.getNativeLibraryDir() ?: "",
+      (backend as? Backend.NPU)?.nativeLibraryDir ?: "",
     )
 
   try {
@@ -78,6 +78,7 @@ fun benchmark(
         null, // SamplerConfig
         "[]", // messagesJsonString
         "[]", // toolsDescriptionJsonString
+        null, // channelsJsonString
         false, // enableConversationConstrainedDecoding
       )
 

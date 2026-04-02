@@ -20,13 +20,15 @@ set(ANTLR_SRC_DIR ${CMAKE_BINARY_DIR}/_deps/antlr_lib-src/runtime/Cpp/runtime/sr
 FetchContent_Declare(
   antlr_lib
   GIT_REPOSITORY https://github.com/antlr/antlr4.git
-  GIT_TAG master
+  GIT_TAG 7d5770395bb7b02eb56e7c62662cb1d7c08f42a3
   GIT_SHALLOW true
   SOURCE_SUBDIR runtime/Cpp
+  PATCH_COMMAND ${CMAKE_COMMAND} -DTARGET_FILE=${ANTLR_SRC_DIR}/../../CMakeLists.txt -P${LITERTLM_PATCHES_DIR}/antlr_patch.cmake
 )
 block()
   set(CMAKE_POLICY_VERSION_MINIMUM "3.5")
   set(ANTLR_BUILD_STATIC ON)
+  set(ANTLR_BUILD_CPP_TESTS OFF CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(antlr_lib)
 endblock()
 if(TARGET antlr4_static)
@@ -50,42 +52,6 @@ set(ANTLR_JAR_PATH "${THIRD_PARTY_DIR}/antlr/antlr-4.13.2-complete.jar")
 message(STATUS "[LiteRTLM] ANTLR JAR located at: ${ANTLR_JAR_PATH}")
 
 
-# --- Llguidance ---
-set(LLGUIDANCE_SRC_DIR ${THIRD_PARTY_DIR}/llguidance CACHE PATH "Path to llguidance source directory")
-FetchContent_Declare(
-  llguidance
-  GIT_REPOSITORY https://github.com/guidance-ai/llguidance.git
-  GIT_TAG main
-  SOURCE_DIR ${LLGUIDANCE_SRC_DIR}
-)
-FetchContent_MakeAvailable(llguidance)
-  set(_cargo_command
-    cargo build --release --target-dir ${CMAKE_BINARY_DIR} --manifest-path ${LLGUIDANCE_SRC_DIR}/parser/Cargo.toml
-    )
-  if(LITERTLM_RUST_TARGET)
-    string(APPEND _cargo_command " --target ${LITERTLM_RUST_TARGET}")
-  endif()
-  add_custom_target(llguidance_build
-    DEPENDS ${LLGUIDANCE_SRC_DIR}/parser/Cargo.toml
-    COMMAND ${_cargo_command}
-    WORKING_DIRECTORY ${LLGUIDANCE_SRC_DIR}/parser
-    COMMENT "Generating libllguidance.a"
-  )
-
-add_litertlm_library(llguidance_lib INTERFACE IMPORTED GLOBAL)
-add_dependencies(llguidance_lib llguidance_build)
-set_target_properties(llguidance_lib PROPERTIES
-  INTERFACE_LINK_LIBRARIES
-    "${CMAKE_BINARY_DIR}/release/libllguidance.a"
-  INTERFACE_INCLUDE_DIRECTORIES
-    "${CMAKE_BINARY_DIR}/release"
-)
-
-if(TARGET llguidance_lib)
-  get_target_property(_llguidance_lib_paths llguidance_lib INTERFACE_LINK_LIBRARIES)
-endif()
-
-
 # --- Corrosion ---
 set(CORROSION_SRC_DIR ${THIRD_PARTY_DIR}/corrosion CACHE PATH "Path to corrosion source directory")
 set(CORROSION_INCLUDE_DIR "${CMAKE_BINARY_DIR}/corrosion_generated/cxxbridge/litertlm_cxx_bridge/include")
@@ -101,6 +67,16 @@ if(TARGET Corrosion)
   include(Corrosion)
 endif()
 
+# --- Llguidance ---
+set(LLGUIDANCE_SRC_DIR ${THIRD_PARTY_DIR}/llguidance CACHE PATH "Path to llguidance source directory")
+set(LLGUIDANCE_INCLUDE_DIR "${THIRD_PARTY_DIR}/llguidance/parser")
+FetchContent_Declare(
+  llguidance
+  GIT_REPOSITORY https://github.com/guidance-ai/llguidance.git
+  GIT_TAG v1.3.0
+  SOURCE_DIR ${LLGUIDANCE_SRC_DIR}
+)
+FetchContent_Populate(llguidance)
 
 # --- LibPNG ---
 set(LIBPNG_SRC_DIR ${THIRD_PARTY_DIR}/libpng CACHE PATH "Path to libpng source directory")
@@ -132,33 +108,31 @@ if(TARGET png_static)
   add_library(libpng_lib ALIAS png_static)
 endif()
 
-
 # --- KissFFT ---
 set(KISSFFT_SRC_DIR ${THIRD_PARTY_DIR}/kissfft CACHE PATH "Path to kissfft source directory")
 FetchContent_Declare(
   kissfft_lib
   GIT_REPOSITORY https://github.com/mborgerding/kissfft
-  GIT_TAG master
+  GIT_TAG 131.2.0
   GIT_SHALLOW true
   SOURCE_DIR ${KISSFFT_SRC_DIR}
 )
 block()
   cmake_policy(SET CMP0077 OLD)
-  set(KISSFFT_TEST OFF)
-  set(KISSFFT_TOOLS OFF)
+  set(KISSFFT_TEST OFF CACHE BOOL "" FORCE)
+  set(KISSFFT_TOOLS OFF CACHE BOOL "" FORCE)
   FetchContent_MakeAvailable(kissfft_lib)
 endblock()
 if(TARGET kissfft)
   add_library(kissfft_lib ALIAS kissfft)
 endif()
 
-
 # --- MiniAudio ---
 set(MINIAUDIO_SRC_DIR ${THIRD_PARTY_DIR}/miniaudio CACHE PATH "Path to miniaudio source directory")
 FetchContent_Declare(
   miniaudio_lib
   GIT_REPOSITORY https://github.com/mackron/miniaudio
-  GIT_TAG master
+  GIT_TAG 0.11.25
   GIT_SHALLOW true
   SOURCE_DIR ${MINIAUDIO_SRC_DIR}
 )
@@ -167,37 +141,44 @@ if(TARGET miniaudio)
   add_library(miniaudio_lib ALIAS miniaudio)
 endif()
 
-
 # --- MiniZip ---
 set(MINIZIP_SRC_DIR ${THIRD_PARTY_DIR}/minizip CACHE PATH "Path to minizip source directory")
 FetchContent_Declare(
   minizip_lib
   GIT_REPOSITORY https://github.com/domoticz/minizip
-  GIT_TAG master
+  GIT_TAG aee7fbddf118d9363575af96310c29fa747d70c0
   GIT_SHALLOW true
   SOURCE_DIR ${MINIZIP_SRC_DIR}
 )
-FetchContent_MakeAvailable(minizip_lib)
+block()
+  FetchContent_MakeAvailable(minizip_lib)
+endblock()
+
 if(TARGET minizip)
   add_library(minizip_lib ALIAS minizip)
 endif()
-
 
 # --- Minja ---
 set(MINJA_SRC_DIR ${THIRD_PARTY_DIR}/minja CACHE PATH "Path to minja source directory")
 FetchContent_Declare(
   minja_lib
   GIT_REPOSITORY https://github.com/google/minja
-  GIT_TAG main
+  GIT_TAG 021c2293c187789ef13d56c6cfd89c9b134fd80f
   GIT_SHALLOW true
   SOURCE_DIR ${MINJA_SRC_DIR}
+  PATCH_COMMAND ${CMAKE_COMMAND} -DTARGET_FILE=${MINJA_SRC_DIR}/CMakeLists.txt -P${LITERTLM_PATCHES_DIR}/minja_patch.cmake
 )
-set(MINJA_TEST_ENABLED OFF)
+  # Turn off tests and examples
+set(MINJA_TEST_ENABLED OFF CACHE BOOL "")
+set(MINJA_EXAMPLE_ENABLE OFF CACHE BOOL "")
+set(MINJA_FUZZTEST_ENABLED OFF CACHE BOOL "")
+set(MINJA_FUZZTEST_FUZZING_MODE OFF CACHE BOOL "")
+
 FetchContent_MakeAvailable(minja_lib)
+
 if(TARGET minja)
   add_library(minja_lib ALIAS minja)
 endif()
-
 
 # --- JSON (Header Only - Populated) ---
 set(JSON_SRC_DIR ${THIRD_PARTY_DIR}/json CACHE PATH "Path to json headers")
@@ -223,7 +204,6 @@ if(NOT TARGET LiteRTLM::nlohmann_json::nlohmann_json)
   target_link_libraries(LiteRTLM::nlohmann_json::nlohmann_json INTERFACE nlohmann_json::nlohmann_json)
 endif()
 
-
 # --- STB (Header Only - Populated) ---
 set(STB_SRC_DIR ${THIRD_PARTY_DIR}/stb_lib CACHE PATH "Path to libstb headers")
 FetchContent_Declare(
@@ -238,7 +218,6 @@ if(NOT TARGET stb_lib)
   add_library(stb_lib INTERFACE)
   target_include_directories(stb_lib INTERFACE ${STB_SRC_DIR})
 endif()
-
 
 # --- ZLIB ---
 set(ZLIB_SRC_DIR ${THIRD_PARTY_DIR}/zlib CACHE PATH "Path to zlib source directory")
@@ -258,7 +237,6 @@ if(TARGET zlibstatic)
 elseif(TARGET zlib)
   add_library(zlib_lib ALIAS zlib)
 endif()
-
 
 # --- Path Exports ---
 set(FETCHCONTENT_MODULE_SRC_DIRS

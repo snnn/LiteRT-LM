@@ -83,6 +83,9 @@ class ConversationConfig {
   // initialize.
   bool prefill_preface_on_init() const { return prefill_preface_on_init_; }
 
+  // Returns the channels configured for the conversation.
+  const std::vector<Channel>& GetChannels() const { return channels_; }
+
  public:
   // Builder class for ConversationConfig.
   //
@@ -151,11 +154,17 @@ class ConversationConfig {
       return *this;
     }
 
+    // Sets the channels for the conversation.
+    Builder& SetChannels(const std::vector<Channel>& channels) {
+      channels_ = channels;
+      return *this;
+    }
+
     absl::StatusOr<ConversationConfig> Build(const Engine& engine) {
       return ConversationConfig::CreateInternal(
           engine, session_config_, preface_, overwrite_prompt_template_,
           overwrite_processor_config_, enable_constrained_decoding_,
-          prefill_preface_on_init_, constraint_provider_config_);
+          prefill_preface_on_init_, constraint_provider_config_, channels_);
     }
 
     // Returns a unique pointer to a ConversationConfig.
@@ -173,6 +182,7 @@ class ConversationConfig {
     bool enable_constrained_decoding_ = false;
     bool prefill_preface_on_init_ = false;
     std::optional<ConstraintProviderConfig> constraint_provider_config_;
+    std::optional<std::vector<Channel>> channels_ = std::nullopt;
   };
 
   // Returns the constrained decoding config.
@@ -206,6 +216,7 @@ class ConversationConfig {
   // - `prefill_preface_on_init`: Whether to prefill the preface on init. If
   //     true, the preface will be prefilled on init, which will make the first
   //     response faster, but take longer to initialize.
+  // - `channels`: The channels configured for the conversation.
   static absl::StatusOr<ConversationConfig> CreateInternal(
       const Engine& engine, const SessionConfig& session_config,
       std::optional<Preface> preface = std::nullopt,
@@ -215,7 +226,8 @@ class ConversationConfig {
       bool enable_constrained_decoding = false,
       bool prefill_preface_on_init = false,
       std::optional<ConstraintProviderConfig> constraint_provider_config =
-          std::nullopt);
+          std::nullopt,
+      std::optional<std::vector<Channel>> channels = std::nullopt);
 
   explicit ConversationConfig(SessionConfig session_config, Preface preface,
                               PromptTemplate prompt_template,
@@ -223,14 +235,16 @@ class ConversationConfig {
                               bool constrained_decoding_enabled = false,
                               bool prefill_preface_on_init = false,
                               std::optional<ConstraintProviderConfig>
-                                  constraint_provider_config = std::nullopt)
+                                  constraint_provider_config = std::nullopt,
+                              std::vector<Channel> channels = {})
       : session_config_(std::move(session_config)),
         preface_(std::move(preface)),
         prompt_template_(std::move(prompt_template)),
         processor_config_(std::move(processor_config)),
         constrained_decoding_enabled_(constrained_decoding_enabled),
         prefill_preface_on_init_(prefill_preface_on_init),
-        constraint_provider_config_(std::move(constraint_provider_config)) {}
+        constraint_provider_config_(std::move(constraint_provider_config)),
+        channels_(std::move(channels)) {}
 
   SessionConfig session_config_;
   Preface preface_;
@@ -239,6 +253,7 @@ class ConversationConfig {
   bool constrained_decoding_enabled_;
   bool prefill_preface_on_init_;
   std::optional<ConstraintProviderConfig> constraint_provider_config_;
+  std::vector<Channel> channels_;
 };
 
 // Optional arguments for sending a message to the LLM.

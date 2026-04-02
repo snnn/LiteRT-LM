@@ -138,7 +138,11 @@ jobs:
             | grep -v -e LiteRtIsSameLayout -e LiteRtGetNumLayoutElements \
                       -e "LiteRt.*Logger" -e "LiteRt.*Metric" -e "LiteRt.*OpaqueOptions" \
                       -e "LiteRt.*EnvironmentOptions" -e LiteRtGetLogSeverityName \
-                      -e LiteRtCompareApiVersion -e LiteRtGetStatusString
+                      -e LiteRtCompareApiVersion -e LiteRtGetStatusString \
+                      -e LiteRtGetNumModelSignatures -e LiteRtGetModelSignature \
+                      -e LiteRtGetSignatureKey -e LiteRtGetSignatureOutputTensor \
+                      -e LiteRtGetQuantizationTypeId -e LiteRtGetPerTensorQuantization \
+                      -e TensorBufferRequirements
 
       - name: Setup Android NDK.
         uses: nttld/setup-ndk@v1

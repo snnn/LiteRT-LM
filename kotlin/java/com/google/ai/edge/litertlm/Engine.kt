@@ -79,9 +79,10 @@ class Engine(val engineConfig: EngineConfig) : AutoCloseable {
           engineConfig.maxNumTokens ?: -1,
           engineConfig.cacheDir ?: "",
           @OptIn(ExperimentalApi::class) ExperimentalFlags.enableBenchmark,
-          (engineConfig.backend as? Backend.NPU)?.getNativeLibraryDir() ?: "",
-          (engineConfig.visionBackend as? Backend.NPU)?.getNativeLibraryDir() ?: "",
-          (engineConfig.audioBackend as? Backend.NPU)?.getNativeLibraryDir() ?: "",
+          @OptIn(ExperimentalApi::class) ExperimentalFlags.enableSpeculativeDecoding,
+          (engineConfig.backend as? Backend.NPU)?.nativeLibraryDir ?: "",
+          (engineConfig.visionBackend as? Backend.NPU)?.nativeLibraryDir ?: "",
+          (engineConfig.audioBackend as? Backend.NPU)?.nativeLibraryDir ?: "",
           mainBackendNumThreads,
           audioBackendNumThreads,
         )
@@ -126,6 +127,19 @@ class Engine(val engineConfig: EngineConfig) : AutoCloseable {
           }
         }
 
+      // Convert the channels to a JSON array, if provided.
+      // If `channels` is null, the `Conversation` uses the default from the
+      // `LlmMetadata` or the model type.
+      // If channels is empty, channels will be disabled.
+      val channelsJson: JsonArray? =
+        conversationConfig.channels?.let { channels ->
+          JsonArray().apply {
+            for (channel in channels) {
+              this.add(channel.toJson())
+            }
+          }
+        }
+
       @OptIn(ExperimentalApi::class) // opt-in experimental flags
       return Conversation(
         LiteRtLmJni.nativeCreateConversation(
@@ -133,6 +147,7 @@ class Engine(val engineConfig: EngineConfig) : AutoCloseable {
           conversationConfig.samplerConfig,
           messagesJson.toString(),
           toolManager.getToolsDescription().toString(),
+          channelsJson?.toString(),
           ExperimentalFlags.enableConversationConstrainedDecoding,
         ),
         toolManager,

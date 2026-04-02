@@ -61,7 +61,7 @@
 #include "runtime/executor/llm_executor_settings.h"
 #include "runtime/proto/sampler_params.pb.h"
 #include "runtime/util/scoped_file.h"
-#include "runtime/util/status_macros.h"  // IWYU pragma: keep
+#include "runtime/util/status_macros.h"  // NOLINT
 #include "re2/re2.h"  // from @com_googlesource_code_re2
 #include "tflite/profiling/memory_info.h"  // from @litert
 #include "tflite/profiling/memory_usage_monitor.h"  // from @litert
@@ -241,6 +241,7 @@ absl::StatusOr<EngineSettings> CreateEngineSettings(
       .cache_compiled_shaders_only = settings.cache_compiled_shaders_only,
       .share_constant_tensors = settings.share_constant_tensors,
       .sampler_handles_input = settings.sampler_handles_input,
+      .enable_speculative_decoding = settings.enable_speculative_decoding,
   };
   if (settings.conv_type == ConvType::kFloat) {
     advanced_settings.allow_src_quantized_fc_conv_ops = false;

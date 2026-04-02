@@ -24,7 +24,6 @@ string(REPLACE "project(tensorflow-lite C CXX)"
     CONTENT "${CONTENT}")
 file(WRITE "${ROOT_LIST}" "${CONTENT}")
 
-
 set(CONFIG_GEN_H "${TENSORFLOW_SOURCE_DIR}/tensorflow/lite/acceleration/configuration/configuration_generated.h")
 if(EXISTS "${CONFIG_GEN_H}")
     file(READ "${CONFIG_GEN_H}" CONTENT)
@@ -85,6 +84,7 @@ foreach(C_FILE ${ALL_CMAKELISTS})
     file(WRITE "${C_FILE}" "${CONTENT}")
 endforeach()
 
+# --- XNNPACK ---
 set(XNNPACK_MOD_FILE "${TFLITE_SRC_DIR}/tools/cmake/modules/xnnpack/CMakeLists.txt")
 
 if(EXISTS "${XNNPACK_MOD_FILE}")
@@ -92,6 +92,8 @@ if(EXISTS "${XNNPACK_MOD_FILE}")
     file(APPEND "${XNNPACK_MOD_FILE}" 
         "\n# [LiteRTLM] Automated Fix\ninclude(\"${TFLITE_PACKAGE_DIR}/shims/xnnpack_shim.cmake\")\n")
 endif()
+
+
 
 set(XNN_DELEGATE_CMAKELISTS "${TFLITE_SRC_DIR}/CMakeLists.txt")
 
@@ -148,7 +150,6 @@ foreach(RECORD ${PROTO_RECORDS})
                " ${TENSORFLOW_SOURCE_DIR}/${PDIR}/${PFILE}" CONTENT "${CONTENT}")
         string(REPLACE "tflite/"
                "tensorflow/lite/" CONTENT "${CONTENT}")
-
         file(WRITE "${TARGET_LIST}" "${CONTENT}")
     endif()
 endforeach()

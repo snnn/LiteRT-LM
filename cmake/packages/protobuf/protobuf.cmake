@@ -26,6 +26,13 @@ set(PROTO_BIN_DIR ${PROTO_INSTALL_PREFIX}/bin CACHE INTERNAL "")
 set(PROTO_PROTOC_EXECUTABLE ${PROTO_BIN_DIR}/protoc CACHE INTERNAL "")
 set(protobuf_generate_PROTOC_EXE ${PROTO_BIN_DIR}/protoc CACHE INTERNAL "")
 
+if(DEFINED LITERTLM_HOST_PROTOC)
+    message(STATUS "[LiteRTLM] Protobuf: Using host protoc at ${LITERTLM_HOST_PROTOC}")
+    set(PROTO_BIN_DIR ${LITERTLM_HOST_PROTOC_BIN_DIR} CACHE INTERNAL "Host Protobuf binary path")
+    set(PROTO_PROTOC_EXECUTABLE "${LITERTLM_HOST_PROTOC}" CACHE INTERNAL "Host protoc")
+    set(protobuf_generate_PROTOC_EXE "${LITERTLM_HOST_PROTOC}" CACHE INTERNAL "Host protoc for generator module")
+endif()
+
 
 setup_external_install_structure("${PROTO_INSTALL_PREFIX}")
 
@@ -49,6 +56,8 @@ if(NOT EXISTS "${PROTO_CONFIG_CMAKE_FILE}")
       -DLITERTLM_PROTO_SHIM_PATH="${PROTOBUF_PACKAGE_DIR}/protobuf_shims.cmake"
       -P "${PROTOBUF_PACKAGE_DIR}/protobuf_patcher.cmake"
     CMAKE_ARGS
+      ${LITERTLM_TOOLCHAIN_FILE}
+      ${LITERTLM_TOOLCHAIN_ARGS}
       -DCMAKE_PREFIX_PATH=${GTEST_INSTALL_PREFIX};${ABSL_INSTALL_PREFIX}
       -DCMAKE_INSTALL_PREFIX=${PROTO_INSTALL_PREFIX}
       -DCMAKE_INSTALL_LIBDIR=lib
@@ -72,14 +81,11 @@ if(NOT EXISTS "${PROTO_CONFIG_CMAKE_FILE}")
       -DLITERTLM_MODULES_DIR=${LITERTLM_MODULES_DIR}
       -DLITERTLM_PROTO_SHIM_PATH="${PROTOBUF_PACKAGE_DIR}/protobuf_shims.cmake"
 
-    STEP_TARGETS
-      verify_install_step
   )
 
-  verify_install(protobuf_external ${PROTO_CONFIG_CMAKE_FILE})
 
 else()
-  message(STATUS "Protobuf already installed at: ${PROTO_INSTALL_PREFIX}")
+  message(STATUS "[LiteRTLM] Protobuf already installed at: ${PROTO_INSTALL_PREFIX}")
   if(NOT TARGET protobuf_external)
     add_custom_target(protobuf_external)
   endif()

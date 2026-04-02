@@ -209,6 +209,32 @@ absl::AnyInvocable<void(absl::StatusOr<Message>)> CreateTestMessageCallback(
   };
 }
 
+absl::AnyInvocable<void(absl::StatusOr<Message>)>
+CreateTestMultiMessageCallback(const std::vector<Message>& expected_messages,
+                               absl::Notification& done) {
+  return [&expected_messages, &done,
+          current_index = 0](absl::StatusOr<Message> message) mutable {
+    ASSERT_OK(message);
+    ASSERT_TRUE(std::holds_alternative<JsonMessage>(message.value()));
+    auto json_message = std::get<JsonMessage>(message.value());
+
+    // If the message is null, the message stream is complete.
+    if (json_message.is_null()) {
+      EXPECT_TRUE(current_index == expected_messages.size())
+          << "Expected " << expected_messages.size()
+          << " messages but only got " << current_index;
+      done.Notify();
+      return;
+    }
+
+    ASSERT_LT(current_index, expected_messages.size())
+        << "Received more messages than expected. Expected size: "
+        << expected_messages.size();
+    EXPECT_THAT(*message, testing::Eq(expected_messages[current_index]));
+    ++current_index;
+  };
+}
+
 TEST(ConversationConfigTest, CreateDefault) {
   ASSERT_OK_AND_ASSIGN(auto model_assets,
                        ModelAssets::Create(GetTestdataPath(kTestLlmPath)));
@@ -532,6 +558,90 @@ Thinking disabled.<end_of_turn>
               testing::ElementsAre(user_message, assistant_message));
 }
 
+TEST_P(ConversationTest, SendSingleMessageWithExtraContextOverwritingPreface) {
+  // Set up mock Session.
+  auto mock_session = CreateMockSession();
+  MockSession* mock_session_ptr = mock_session.get();
+  auto mock_engine = CreateMockEngine(std::move(mock_session));
+
+  // Create Conversation and overwrite prompt template.
+  absl::string_view prompt_template = R"jinja(
+{%- if key1 -%}
+Key1: {{ key1 + "\n"}}
+{%- endif -%}
+{%- if key2 -%}
+Key2: {{ key2 + "\n"}}
+{%- endif -%}
+{%- if key3 -%}
+Key3: {{ key3 + "\n"}}
+{%- endif -%}
+{%- for message in messages -%}
+  {{- '<start_of_turn>' + message.role + '\n' -}}
+  {%- if message.content is string -%}
+    {{- message.content + '<end_of_turn>\n' -}}
+  {%- else -%}
+    {{- message.content[0].text + '<end_of_turn>\n' -}}
+  {%- endif -%}
+{%- endfor -%}
+)jinja";
+
+  JsonPreface preface;
+
+  // This extra context will be set at the Conversation level.
+  preface.extra_context = {{"key1", "val1"}, {"key2", "val2"}};
+
+  ASSERT_OK_AND_ASSIGN(
+      auto conversation_config,
+      ConversationConfig::Builder()
+          .SetSessionConfig(session_config_)
+          .SetPreface(preface)
+          .SetOverwritePromptTemplate(PromptTemplate(prompt_template))
+          .Build(*mock_engine));
+  ASSERT_OK_AND_ASSIGN(auto conversation,
+                       Conversation::Create(*mock_engine, conversation_config));
+
+  // We will send a single message with extra context that overwrites key1 and
+  // adds key3.
+  JsonMessage user_message = {{"role", "user"}, {"content", "How are you?"}};
+  OptionalArgs optional_args;
+  optional_args.extra_context =
+      nlohmann::ordered_json{{"key1", "val1_new"}, {"key3", "val3"}};
+
+  // key1 should be overwritten to val1_new.
+  // key2 should remain val2.
+  // key3 should be added as val3.
+  absl::string_view expected_input_text =
+      "Key1: val1_new\n"
+      "Key2: val2\n"
+      "Key3: val3\n"
+      "<start_of_turn>user\n"
+      "How are you?<end_of_turn>\n";
+
+  EXPECT_CALL(*mock_session_ptr,
+              RunPrefill(testing::ElementsAre(
+                  testing::VariantWith<InputText>(testing::Property(
+                      &InputText::GetRawTextString, expected_input_text)))))
+      .WillOnce(testing::Return(absl::OkStatus()));
+  EXPECT_CALL(*mock_session_ptr, RunDecode(testing::_))
+      .WillOnce(
+          testing::Return(Responses(TaskState::kProcessing, {"I am good."})));
+
+  ASSERT_OK_AND_ASSIGN(
+      const Message response,
+      conversation->SendMessage(user_message, std::move(optional_args)));
+
+  JsonMessage assistant_message = nlohmann::ordered_json::parse(R"({
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "I am good."
+      }
+    ]
+  })");
+  EXPECT_EQ(std::get<JsonMessage>(response), assistant_message);
+}
+
 TEST_P(ConversationTest, SendMultipleMessages) {
   // Set up mock Session.
   auto mock_session = CreateMockSession();
@@ -594,6 +704,127 @@ TEST_P(ConversationTest, SendMultipleMessages) {
   EXPECT_THAT(conversation->GetHistory(),
               testing::ElementsAre(user_messages[0], user_messages[1],
                                    assistant_message));
+}
+
+TEST_P(ConversationTest, SendSingleMessageWithChannel) {
+  // Set up mock Session.
+  auto mock_session = CreateMockSession();
+  MockSession* mock_session_ptr = mock_session.get();
+  auto mock_engine = CreateMockEngine(std::move(mock_session));
+
+  // Create Conversation.
+  ASSERT_OK_AND_ASSIGN(
+      auto conversation_config,
+      ConversationConfig::Builder()
+          .SetSessionConfig(session_config_)
+          .SetEnableConstrainedDecoding(enable_constrained_decoding_)
+          .SetOverwritePromptTemplate(PromptTemplate(kTestJinjaPromptTemplate))
+          .SetPrefillPrefaceOnInit(prefill_preface_on_init_)
+          .SetChannels({litert::lm::Channel{
+              .channel_name = "thought",
+              .start = "<|channel>thought\n",
+              .end = "<channel|>",
+          }})
+          .Build(*mock_engine));
+  ASSERT_OK_AND_ASSIGN(auto conversation,
+                       Conversation::Create(*mock_engine, conversation_config));
+
+  // Send a single message.
+  JsonMessage user_message = {{"role", "user"}, {"content", "How are you?"}};
+
+  absl::string_view expected_input_text =
+      "<start_of_turn>user\n"
+      "How are you?<end_of_turn>\n";
+
+  EXPECT_CALL(*mock_session_ptr,
+              RunPrefill(testing::ElementsAre(
+                  testing::VariantWith<InputText>(testing::Property(
+                      &InputText::GetRawTextString, expected_input_text)))))
+      .WillOnce(testing::Return(absl::OkStatus()));
+  EXPECT_CALL(*mock_session_ptr, RunDecode(testing::_))
+      .WillOnce(testing::Return(
+          Responses(TaskState::kProcessing,
+                    {"<|channel>thought\nhmm<channel|>I am good."})));
+
+  // Send the message.
+  ASSERT_OK_AND_ASSIGN(const Message response,
+                       conversation->SendMessage(user_message));
+
+  JsonMessage assistant_message = nlohmann::ordered_json::parse(R"({
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "I am good."
+      }
+    ],
+    "channels": {
+      "thought": "hmm"
+    }
+  })");
+  EXPECT_THAT(std::get<JsonMessage>(response), testing::Eq(assistant_message));
+  EXPECT_THAT(conversation->GetHistory(),
+              testing::ElementsAre(user_message, assistant_message));
+}
+
+TEST_P(ConversationTest, SendSingleMessageWithChannelQwenThink) {
+  // Set up mock Session.
+  auto mock_session = CreateMockSession();
+  MockSession* mock_session_ptr = mock_session.get();
+  auto mock_engine = CreateMockEngine(std::move(mock_session));
+
+  // Create Conversation.
+  ASSERT_OK_AND_ASSIGN(
+      auto conversation_config,
+      ConversationConfig::Builder()
+          .SetSessionConfig(session_config_)
+          .SetEnableConstrainedDecoding(enable_constrained_decoding_)
+          .SetOverwritePromptTemplate(PromptTemplate(kTestJinjaPromptTemplate))
+          .SetPrefillPrefaceOnInit(prefill_preface_on_init_)
+          .SetChannels({litert::lm::Channel{
+              .channel_name = "thought",
+              .start = "<think>\n",
+              .end = "\n</think>",
+          }})
+          .Build(*mock_engine));
+  ASSERT_OK_AND_ASSIGN(auto conversation,
+                       Conversation::Create(*mock_engine, conversation_config));
+
+  // Send a single message.
+  JsonMessage user_message = {{"role", "user"}, {"content", "How are you?"}};
+
+  absl::string_view expected_input_text =
+      "<start_of_turn>user\n"
+      "How are you?<end_of_turn>\n";
+
+  EXPECT_CALL(*mock_session_ptr,
+              RunPrefill(testing::ElementsAre(
+                  testing::VariantWith<InputText>(testing::Property(
+                      &InputText::GetRawTextString, expected_input_text)))))
+      .WillOnce(testing::Return(absl::OkStatus()));
+  EXPECT_CALL(*mock_session_ptr, RunDecode(testing::_))
+      .WillOnce(testing::Return(Responses(
+          TaskState::kProcessing, {"<think>\nhmm\n</think>I am good."})));
+
+  // Send the message.
+  ASSERT_OK_AND_ASSIGN(const Message response,
+                       conversation->SendMessage(user_message));
+
+  JsonMessage assistant_message = nlohmann::ordered_json::parse(R"({
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "I am good."
+      }
+    ],
+    "channels": {
+      "thought": "hmm"
+    }
+  })");
+  EXPECT_THAT(std::get<JsonMessage>(response), testing::Eq(assistant_message));
+  EXPECT_THAT(conversation->GetHistory(),
+              testing::ElementsAre(user_message, assistant_message));
 }
 
 TEST_P(ConversationTest, SendMultipleMessagesWithHistory) {
@@ -843,6 +1074,83 @@ TEST_P(ConversationTest, SendSingleMessageAsync) {
   EXPECT_THAT(
       conversation->GetHistory(),
       testing::ElementsAre(user_message, assistant_message_for_confirm));
+}
+
+TEST_P(ConversationTest, SendMessageAsyncWithChannelContent) {
+  auto mock_session = CreateMockSession();
+  MockSession* mock_session_ptr = mock_session.get();
+  auto mock_engine = CreateMockEngine(std::move(mock_session));
+
+  std::vector<Channel> custom_channels = {{"thought", "<think>", "</think>"}};
+  ASSERT_OK_AND_ASSIGN(
+      auto conversation_config,
+      ConversationConfig::Builder()
+          .SetSessionConfig(session_config_)
+          .SetOverwritePromptTemplate(PromptTemplate(kTestJinjaPromptTemplate))
+          .SetChannels(custom_channels)
+          .Build(*mock_engine));
+  ASSERT_OK_AND_ASSIGN(auto conversation,
+                       Conversation::Create(*mock_engine, conversation_config));
+
+  JsonMessage user_message = {{"role", "user"}, {"content", "How are you?"}};
+
+  absl::string_view expected_input_text =
+      "<start_of_turn>user\n"
+      "How are you?<end_of_turn>\n";
+  EXPECT_CALL(
+      *mock_session_ptr,
+      RunPrefillAsync(testing::ElementsAre(testing::VariantWith<InputText>(
+                          testing::Property(&InputText::GetRawTextString,
+                                            expected_input_text))),
+                      testing::_))
+      .WillOnce([](const std::vector<InputData>& contents,
+                   absl::AnyInvocable<void(absl::StatusOr<Responses>)>
+                       user_callback) {
+        user_callback(Responses(TaskState::kDone));
+        return nullptr;
+      });
+
+  EXPECT_CALL(*mock_session_ptr, RunDecodeAsync(testing::_, testing::_))
+      .WillOnce(
+          [](absl::AnyInvocable<void(absl::StatusOr<Responses>)> user_callback,
+             const DecodeConfig& decode_config) {
+            user_callback(Responses(TaskState::kProcessing,
+                                    {"Hello <think>hmm</think> World!"}));
+            user_callback(Responses(TaskState::kDone));
+            return nullptr;
+          });
+
+  absl::Notification done;
+
+  std::vector<Message> expected_messages = {
+      JsonMessage{{"role", "assistant"},
+                  {"content", {{{"type", "text"}, {"text", "Hello "}}}}},
+      JsonMessage{{"role", "assistant"}, {"channels", {{"thought", "hmm"}}}},
+      JsonMessage{{"role", "assistant"},
+                  {"content", {{{"type", "text"}, {"text", " World!"}}}}},
+  };
+  auto message_callback =
+      CreateTestMultiMessageCallback(expected_messages, done);
+  EXPECT_OK(conversation->SendMessageAsync(user_message,
+                                           std::move(message_callback)));
+  done.WaitForNotificationWithTimeout(absl::Seconds(10));
+
+  // Verify the final message in history.
+  JsonMessage expected_assistant_message = nlohmann::ordered_json::parse(R"({
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Hello  World!"
+      }
+    ],
+    "channels": {
+      "thought": "hmm"
+    }
+  })");
+
+  EXPECT_THAT(conversation->GetHistory(),
+              testing::ElementsAre(user_message, expected_assistant_message));
 }
 
 TEST_P(ConversationTest, SendSingleMessageAsyncWithExtraContext) {

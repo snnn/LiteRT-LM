@@ -159,6 +159,13 @@ absl::StatusOr<ModelAssets> ModelAssets::Create(
   return ModelAssets(std::move(model_file), model_path);
 }
 
+// static
+absl::StatusOr<ModelAssets> ModelAssets::Create(
+    std::shared_ptr<litert::lm::MemoryMappedFile> model_file,
+    absl::string_view model_path) {
+  return ModelAssets(std::move(model_file), model_path);
+}
+
 ModelAssets::ModelAssets(std::shared_ptr<litert::lm::ScopedFile> model_file,
                          absl::string_view model_path)
     : path_(model_path), scoped_file_(std::move(model_file)) {}
@@ -169,6 +176,11 @@ ModelAssets::ModelAssets(absl::string_view model_path)
 ModelAssets::ModelAssets(
     std::shared_ptr<litert::lm::MemoryMappedFile> model_file)
     : memory_mapped_file_(std::move(model_file)) {}
+
+ModelAssets::ModelAssets(
+    std::shared_ptr<litert::lm::MemoryMappedFile> model_file,
+    absl::string_view model_path)
+    : path_(model_path), memory_mapped_file_(std::move(model_file)) {}
 
 absl::StatusOr<absl::string_view> ModelAssets::GetPath() const {
   if (!path_.empty()) {

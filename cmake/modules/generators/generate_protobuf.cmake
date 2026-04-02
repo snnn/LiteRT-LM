@@ -30,7 +30,7 @@ function(generate_protobuf TARGET_NAME _root_path)
         get_filename_component(REL_DIR "${REL_PROTO_PATH}" DIRECTORY)
         get_filename_component(FIL_WE "${REL_PROTO_PATH}" NAME_WE)
 
-        set(OUT_DIR "${CMAKE_BINARY_DIR}/${REL_DIR}")
+        set(OUT_DIR "${CMAKE_CURRENT_BINARY_DIR}/${REL_DIR}")
         set(SRC_FILE "${OUT_DIR}/${FIL_WE}.pb.cc")
         set(HDR_FILE "${OUT_DIR}/${FIL_WE}.pb.h")
 
@@ -39,7 +39,7 @@ function(generate_protobuf TARGET_NAME _root_path)
         add_custom_command(
             OUTPUT "${SRC_FILE}" "${HDR_FILE}"
             COMMAND $<TARGET_FILE:protobuf::protoc>
-            ARGS --cpp_out "${CMAKE_BINARY_DIR}"
+            ARGS --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
                  -I "${_root_path}"
                  "${PROTO_FILE}"
             DEPENDS "${PROTO_FILE}" protobuf::protoc

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+pub extern crate llguidance;
+
 #[path = "../runtime/components/rust/minijinja_template.rs"]
 pub mod minijinja_template;
 

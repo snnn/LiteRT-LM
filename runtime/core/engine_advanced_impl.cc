@@ -267,6 +267,10 @@ absl::StatusOr<std::unique_ptr<Engine>> EngineAdvancedImpl::Create(
     tokenizer_duration = absl::Now() - start_time;
     return tokenizer;
   };
+
+  const auto& main_executor_settings =
+      engine_settings.GetMainExecutorSettings();
+
   std::future<absl::StatusOr<std::unique_ptr<Tokenizer>>> tokenizer_future;
   std::unique_ptr<Tokenizer> tokenizer;
   if (!hasLlmModelType) {
@@ -288,7 +292,16 @@ absl::StatusOr<std::unique_ptr<Engine>> EngineAdvancedImpl::Create(
     // after the model is loaded.
     ABSL_LOG(INFO) << "New model files have LlmModelType, loading tokenizer "
                       "asynchronously";
-    tokenizer_future = std::async(std::launch::async, create_tokenizer);
+
+    if (engine_settings.GetParallelFileSectionLoading()) {
+      // Launch the tokenizer creation in a separate thread in parallel with the
+      // model loading.
+      tokenizer_future = std::async(std::launch::async, create_tokenizer);
+    } else {
+      // Launch the tokenizer creation in the same thread.
+      tokenizer_future = std::async(std::launch::deferred, create_tokenizer);
+    }
+
     RETURN_IF_ERROR(engine_settings.MaybeUpdateAndValidate(
         nullptr, llm_metadata, input_prompt_as_hint,
         model_resources->GetTFLiteModelBackendConstraint(
@@ -308,8 +321,6 @@ absl::StatusOr<std::unique_ptr<Engine>> EngineAdvancedImpl::Create(
                    GetEnvironment(engine_settings, *model_resources));
 
   std::unique_ptr<LlmExecutor> executor;
-  const auto& main_executor_settings =
-      engine_settings.GetMainExecutorSettings();
 
   switch (main_executor_settings.GetBackend()) {
     default: {

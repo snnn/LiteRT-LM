@@ -189,7 +189,6 @@ function(cmake_to_c_bool CMAKE_VAL OUTPUT_VAR)
     endif()
 endfunction()
 
-# Note: file(STRINGS) strips blank lines
 function(patch_delete_block TARGET_FILE START_PATTERN END_PATTERN)
     if(EXISTS "${TARGET_FILE}")
 
@@ -210,7 +209,6 @@ function(patch_delete_block TARGET_FILE START_PATTERN END_PATTERN)
                 set(IN_BLOCK FALSE)
             endif()
         endforeach()
-
         string(REPLACE ";" "\n" NEW_CONTENT "${NEW_LINES}")
         file(WRITE "${TARGET_FILE}" "${NEW_CONTENT}\n")
     endif()

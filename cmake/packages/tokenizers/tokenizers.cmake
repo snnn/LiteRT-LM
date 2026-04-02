@@ -13,8 +13,7 @@
 # limitations under the License.
 
 
-# TODO(totero): Refactor to follow the aggregate / shims structure.
-
+# [TODO] Refactor to follow the aggregate / shims structure.
 include(ExternalProject)
 
 set(PKG_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
@@ -47,6 +46,8 @@ if(NOT EXISTS "${TOKENIZER_LIB_CHECK}")
       "LDFLAGS=-L${ABSL_INSTALL_PREFIX}/lib -L${PROTO_INSTALL_PREFIX}/lib"
       "CXXFLAGS=-I${ABSL_INSTALL_PREFIX}/include -I${PROTO_INSTALL_PREFIX}/include"
       ${CMAKE_COMMAND} -S <SOURCE_DIR> -B <BINARY_DIR>
+        ${LITERTLM_TOOLCHAIN_FILE}
+        ${LITERTLM_TOOLCHAIN_ARGS}
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5
         -DCMAKE_INSTALL_PREFIX=${TOKENIZER_INSTALL_PREFIX}
         -DCMAKE_INSTALL_LIBDIR=lib
@@ -77,7 +78,6 @@ target_link_libraries(tokenizers_libs INTERFACE
   imp_tokenizers_c
   imp_tokenizers_cpp
 )
-
 
 if(NOT TARGET LiteRTLM::tokenizers::tokenizers)
     add_library(LiteRTLM::tokenizers::tokenizers INTERFACE IMPORTED GLOBAL)

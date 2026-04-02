@@ -1,3 +1,23 @@
+# Building from Source (Advanced)
+
+🛑 **Note for App Developers:** You do **not** need to build this project from
+ source to use it in your apps. If you are using Kotlin, Swift, or Python,
+ please use our pre-built SDKs. More details in [technical overview](https://ai.google.dev/edge/litert-lm/overview).
+
+This section provides instructions for compiling the core LiteRT-LM C++
+framework from scratch. You should only follow these steps if you are:
+
+* **A core contributor** fixing bugs or adding features to the LiteRT-LM engine.
+* **A native C++ developer** who requires custom compilation flags for an
+embedded system.
+
+  - [Deploy to Windows](#deploy_to_windows)
+  - [Deploy to Linux](#deploy_to_linux)
+  - [Deploy to MacOS](#deploy_to_macos)
+  - [Deploy to Android](#deploy_to_android)
+
+
+
 ## Build and Run
 
 This guide provides the necessary steps to build and execute a Large Language
@@ -65,11 +85,11 @@ Android, Linux, MacOS, and Windows. `runtime/engine/litert_lm_main.cc` is a
 Please check the corresponding section below depending on your target deployment
 device and your development platform.
 
+Make sure [Git LFS](https://git-lfs.com) is installed, and run `git lfs pull` to
+fetch the latest prebuilt binaries.
+
 > Note: In order to run on GPU on all platforms, we need to take extra steps:
 >
-> 1.  Install [Git LFS](https://git-lfs.com), then run `git lfs checkout` to
->     fetch prebuilt binaries. These steps are required only once if not done
->     before.
 > 1.  Add `--define=litert_link_capi_so=true`
 >     `--define=resolve_symbols_in_exec=false` in the build command.
 > 1.  `mkdir -p <test_dir>; cp <your litert_lm_main> <test_dir>; cp

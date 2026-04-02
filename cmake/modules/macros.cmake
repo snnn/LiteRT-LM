@@ -45,6 +45,7 @@ macro(import_proto_lib target_name lib_path)
     endif()
 endmacro()
 
+
 macro(load_package name)
     string(TOUPPER "${name}" upper_name)
     set(USE_SYSTEM_VAR "LITERTLM_USE_SYSTEM_${upper_name}")
@@ -83,7 +84,7 @@ macro(load_package name)
     cmake_checkpoint_target("${name}_external" TYPE CUSTOM QUIET)
 endmacro()
 
-macro(detect_deps_provider dep_name)
+macro(detect_deps_provider name)
     set(_${name}_user_defined FALSE)
     set(_${name}_predefined FALSE)
     set(_${name}_find_package FALSE)
@@ -132,7 +133,7 @@ macro(literlm_configure_component_interface prefix main_targets dependency_targe
 endmacro()
 
 macro(add_litertlm_library target_name lib_type)
-    file(RELATIVE_PATH _rel_path "${PROJECT_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}")
+    file(RELATIVE_PATH _rel_path "${LITERTLM_PROJECT_ROOT}" "${CMAKE_CURRENT_SOURCE_DIR}")
 
     set(_redirected_sources "")
 

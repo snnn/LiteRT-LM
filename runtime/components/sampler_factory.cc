@@ -614,6 +614,20 @@ absl::StatusOr<std::unique_ptr<Sampler>> CreateGpuSampler(
   }
 
 #ifdef __ANDROID__
+  if (use_webgpu) {
+#if LITERT_HAS_WEBGPU_SUPPORT  // NOLINT(misc-include-cleaner)
+    auto webgpu_sampler = TopKWebGpuCApiSampler::Create(
+        env, batch_size, sequence_size, vocab_size, activation_data_type,
+        sampler_params);
+    if (webgpu_sampler.ok() ||
+        webgpu_sampler.status().code() != absl::StatusCode::kUnavailable) {
+      return webgpu_sampler;
+    }
+    ABSL_LOG(INFO) << "WebGPU sampler explicitly requested but "
+                      "failed/unavailable, falling back.";
+#endif  // LITERT_HAS_WEBGPU_SUPPORT
+  }
+
 #if LITERT_HAS_OPENCL_SUPPORT  // NOLINT(misc-include-cleaner)
   auto opencl_sampler =
       TopKOpenClCApiSampler::Create(env, batch_size, sequence_size, vocab_size,
@@ -627,15 +641,17 @@ absl::StatusOr<std::unique_ptr<Sampler>> CreateGpuSampler(
 #endif  // LITERT_HAS_OPENCL_SUPPORT
 
 #if LITERT_HAS_WEBGPU_SUPPORT  // NOLINT(misc-include-cleaner)
-  auto webgpu_sampler =
-      TopKWebGpuCApiSampler::Create(env, batch_size, sequence_size, vocab_size,
-                                    activation_data_type, sampler_params);
-  if (webgpu_sampler.ok() ||
-      webgpu_sampler.status().code() != absl::StatusCode::kUnavailable) {
-    return webgpu_sampler;
+  if (!use_webgpu) {
+    auto webgpu_sampler = TopKWebGpuCApiSampler::Create(
+        env, batch_size, sequence_size, vocab_size, activation_data_type,
+        sampler_params);
+    if (webgpu_sampler.ok() ||
+        webgpu_sampler.status().code() != absl::StatusCode::kUnavailable) {
+      return webgpu_sampler;
+    }
+    ABSL_LOG(INFO) << "WebGPU sampler not available, falling back to other "
+                      "sampler options.";
   }
-  ABSL_LOG(INFO)
-      << "WebGPU sampler not available, falling back to other sampler options.";
 #endif  // LITERT_HAS_WEBGPU_SUPPORT
 
 #else  // !__ANDROID__

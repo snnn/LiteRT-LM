@@ -127,15 +127,28 @@ absl::StatusOr<std::unique_ptr<SessionBasic>> SessionBasic::Create(
         "A session already exists. Only one session is supported at a time. "
         "Please delete the existing session before creating a new one.");
   }
+
+  bool enable_speculative_decoding = false;
+  {
+    ASSIGN_OR_RETURN(auto executor_settings, executor->GetExecutorSettings());
+    auto advanced_settings = executor_settings.GetAdvancedSettings();
+    if (advanced_settings.has_value()) {
+      enable_speculative_decoding =
+          advanced_settings->enable_speculative_decoding;
+    }
+  }
+
   auto sampler_backend = session_config.GetSamplerBackend();
   std::unique_ptr<Sampler> sampler;
-  // If use CPU sampling, we create it here; For GPU sampling, we let executor
-  // create it internally.
+  // If use CPU sampling, we create it here; For GPU sampling and when
+  // speculative decoding is enabled, we let executor create it internally.
   if (sampler_backend == Backend::CPU) {
-    ASSIGN_OR_RETURN(
-        sampler,
-        CreateSampler(sampler_backend, session_config.GetNumOutputCandidates(),
-                      session_config.GetSamplerParams()));
+    if (!enable_speculative_decoding) {
+      ASSIGN_OR_RETURN(sampler,
+                       CreateSampler(sampler_backend,
+                                     session_config.GetNumOutputCandidates(),
+                                     session_config.GetSamplerParams()));
+    }
   } else if (sampler_backend != Backend::GPU &&
              sampler_backend != Backend::NPU) {
     return absl::InvalidArgumentError(

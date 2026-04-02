@@ -88,6 +88,7 @@ constexpr absl::string_view kSrcInputsName = "src_inputs";
 constexpr absl::string_view kSegmentValuesName = "segment_values";
 constexpr absl::string_view kSegmentMaskName = "segment_mask";
 constexpr absl::string_view kPrevMaskName = "prev_mask";
+constexpr absl::string_view kPrevPrefix = "prev_";
 constexpr absl::string_view kFeatureStatesNamePattern = "feature_state";
 
 template <typename T>
@@ -134,7 +135,7 @@ bool IsStreamingEncoder(const std::vector<absl::string_view>& input_names) {
   // input names contain the prev_mask name.
   return std::any_of(input_names.begin(), input_names.end(),
                      [](absl::string_view input_name) {
-                       return absl::StrContains(input_name, kPrevMaskName);
+                       return absl::StrContains(input_name, kPrevPrefix);
                      });
 }
 
@@ -397,12 +398,14 @@ AudioLiteRtCompiledModelExecutor::AudioStreamingEncoder::Initialize() {
                           feature_states_tensor_type.Layout().NumElements());
 
   // Initialize the previous mask buffer to all ones.
-  LITERT_ASSIGN_OR_RETURN(auto prev_mask_type,
-                          input_buffers_map_[kPrevMaskName].TensorType());
-  LITERT_ASSIGN_OR_RETURN(int prev_mask_size,
-                          prev_mask_type.Layout().NumElements());
-  input_buffers_map_[kPrevMaskName].Write<uint8_t>(
-      std::vector<uint8_t>(prev_mask_size, 1));
+  if (input_buffers_map_.contains(kPrevMaskName)) {
+    LITERT_ASSIGN_OR_RETURN(auto prev_mask_type,
+                            input_buffers_map_[kPrevMaskName].TensorType());
+    LITERT_ASSIGN_OR_RETURN(int prev_mask_size,
+                            prev_mask_type.Layout().NumElements());
+    input_buffers_map_[kPrevMaskName].Write<uint8_t>(
+        std::vector<uint8_t>(prev_mask_size, 1));
+  }
 
   return absl::OkStatus();
 }
@@ -746,7 +749,15 @@ AudioLiteRtCompiledModelExecutor::AudioStreamingEncoder::CreateNewContext() {
     }
     LITERT_ASSIGN_OR_RETURN(auto new_buffer, compiled_model_.CreateInputBuffer(
                                                  signature.Key(), name));
-    LITERT_RETURN_IF_ERROR(InitializeBuffer(new_buffer));
+    if (name == kPrevMaskName) {
+      LITERT_ASSIGN_OR_RETURN(auto prev_mask_type, buffer.TensorType());
+      LITERT_ASSIGN_OR_RETURN(int prev_mask_size,
+                              prev_mask_type.Layout().NumElements());
+      input_buffers_map_[kPrevMaskName].Write<uint8_t>(
+          std::vector<uint8_t>(prev_mask_size, 1));
+    } else {
+      LITERT_RETURN_IF_ERROR(InitializeBuffer(new_buffer));
+    }
     state_buffers[name] = std::move(new_buffer);
   }
   auto audio_streaming_context =
@@ -815,6 +826,18 @@ AudioLiteRtCompiledModelExecutor::CloneContext() {
       reinterpret_cast<AudioStreamingEncoder*>(audio_encoder_.get())
           ->CloneContext());
   return std::move(audio_encoder_context);
+}
+
+absl::StatusOr<std::unique_ptr<AudioContext>>
+AudioLiteRtCompiledModelExecutor::CloneContext(
+    const AudioContext& audio_context) {
+  if (!executor_properties_.is_streaming_model) {
+    return absl::UnimplementedError(
+        "CloneContext is only supported for streaming models.");
+  }
+  const AudioStreamingContext& audio_streaming_context =
+      static_cast<const AudioStreamingContext&>(audio_context);
+  return audio_streaming_context.Clone();
 }
 
 absl::Status AudioLiteRtCompiledModelExecutor::RestoreContext(

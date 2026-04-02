@@ -29,6 +29,7 @@
 #include "runtime/conversation/model_data_processor/config_registry.h"
 #include "runtime/conversation/model_data_processor/function_gemma_data_processor_config.h"
 #include "runtime/conversation/model_data_processor/gemma3_data_processor_config.h"
+#include "runtime/conversation/model_data_processor/gemma4_data_processor_config.h"
 #include "runtime/conversation/model_data_processor/generic_data_processor_config.h"
 #include "runtime/conversation/model_data_processor/model_data_processor.h"
 #include "runtime/conversation/model_data_processor/qwen3_data_processor_config.h"
@@ -182,6 +183,43 @@ TEST_F(ModelDataProcessorFactoryTest, CreateFunctionGemmaDataProcessor) {
   EXPECT_THAT(processor->ToInputDataVector("test prompt", {},
                                            GenericDataProcessorArguments()),
               StatusIs(absl::StatusCode::kInvalidArgument));
+}
+
+TEST_F(ModelDataProcessorFactoryTest, CreateGemma4DataProcessor) {
+  auto tokenizer = SentencePieceTokenizer::CreateFromFile(
+      (std::filesystem::path(::testing::SrcDir()) / kTestdataDir /
+       "gemma3_sentencepiece.model")
+          .string());
+  ASSERT_OK(tokenizer);
+
+  proto::LlmModelType llm_model_type;
+  llm_model_type.mutable_gemma4();
+  ASSERT_OK_AND_ASSIGN(
+      auto config, CreateDataProcessorConfigFromLlmModelType(llm_model_type));
+  ASSERT_TRUE(std::holds_alternative<Gemma4DataProcessorConfig>(config));
+  ASSERT_OK_AND_ASSIGN(
+      auto processor,
+      CreateModelDataProcessor(config, /*preface=*/std::nullopt,
+                               (*tokenizer).get(), {},
+                               /*enable_constrained_decoding=*/false));
+  EXPECT_OK(processor->ToInputDataVector("test prompt", {},
+                                         Gemma4DataProcessorArguments()));
+  EXPECT_THAT(processor->ToInputDataVector("test prompt", {},
+                                           GenericDataProcessorArguments()),
+              StatusIs(absl::StatusCode::kInvalidArgument));
+
+  // Ensure the config from the proto will override the default values.
+  llm_model_type.mutable_gemma4()->set_max_num_patches(1280);
+  llm_model_type.mutable_gemma4()->set_patch_width(8);
+  llm_model_type.mutable_gemma4()->set_patch_height(8);
+
+  ASSERT_OK_AND_ASSIGN(
+      auto config2, CreateDataProcessorConfigFromLlmModelType(llm_model_type));
+  ASSERT_TRUE(std::holds_alternative<Gemma4DataProcessorConfig>(config2));
+  auto gemma4_config = std::get<Gemma4DataProcessorConfig>(config2);
+  EXPECT_EQ(gemma4_config.max_num_patches, 1280);
+  EXPECT_EQ(gemma4_config.patch_width, 8);
+  EXPECT_EQ(gemma4_config.patch_height, 8);
 }
 
 }  // namespace

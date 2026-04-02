@@ -34,6 +34,7 @@
 #include "litert/cc/litert_layout.h"  // from @litert
 #include "litert/cc/litert_macros.h"  // from @litert
 #include "litert/cc/litert_model.h"  // from @litert
+#include "litert/cc/litert_ranked_tensor_type.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer_types.h"  // from @litert
 #include "litert/test/matchers.h"  // from @litert
@@ -74,7 +75,7 @@ class EmbeddingLookupTextTest : public testing::Test {
     if (!model_.has_value()) {
       return nullptr;
     }
-    auto status = EmbeddingLookupText::Create(&*model_, signature_key);
+    auto status = EmbeddingLookupText::Create(&*model_, signature_key, &*env_);
     if (!status.ok()) {
       return nullptr;
     }

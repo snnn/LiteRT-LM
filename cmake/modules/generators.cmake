@@ -19,7 +19,6 @@ set(LITERTLM_GENERATORS_DIR "${LITERTLM_MODULES_DIR}/generators" CACHE INTERNAL 
 include("${LITERTLM_GENERATORS_DIR}/generate_protobuf.cmake")
 include("${LITERTLM_GENERATORS_DIR}/generate_cxxbridge.cmake")
 
-
 function(generate_src_files OUTPUT_CLEAN_PATHS)
     set(RAW_FILES ${ARGN})
     set(CLEANED_PATHS_OUT "")
@@ -28,7 +27,7 @@ function(generate_src_files OUTPUT_CLEAN_PATHS)
         get_filename_component(FILE_NAME ${RAW_FILE} NAME)
         get_filename_component(FILE_DIR ${RAW_FILE} DIRECTORY)
 
-        file(RELATIVE_PATH REL_PATH "${PROJECT_ROOT}" "${FILE_DIR}")
+        file(RELATIVE_PATH REL_PATH "${LITERTLM_PROJECT_ROOT}" "${FILE_DIR}")
 
         set(GEN_DIR "${GENERATED_SRC_DIR}/${REL_PATH}")
         file(MAKE_DIRECTORY "${GEN_DIR}")
@@ -57,8 +56,8 @@ add_dependencies(litertlm_generated_protobuf protobuf_external)
 
 target_include_directories(litertlm_generated_protobuf
   PUBLIC
-    ${CMAKE_BINARY_DIR}
-    ${PROJECT_ROOT}
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${LITERTLM_PROJECT_ROOT}
     ${PROTO_SRC_DIR}
     ${PROTO_INCLUDE_DIR}
     ${ABSL_INCLUDE_DIR}
@@ -77,7 +76,7 @@ if(NOT TARGET protobuf::protoc)
     )
 endif()
 
-generate_protobuf(litertlm_generated_protobuf ${PROJECT_ROOT})
+generate_protobuf(litertlm_generated_protobuf ${LITERTLM_PROJECT_ROOT})
 
 set(GEN_C_DIR "${GENERATED_SRC_DIR}/c")
 set(GEN_SCHEMA_DIR "${GENERATED_SRC_DIR}/schema")
@@ -85,29 +84,34 @@ set(GEN_RUNTIME_DIR "${GENERATED_SRC_DIR}/runtime")
 
 set(ALL_SOURCE_FILES "")
 set(ALL_HEADER_FILES "")
-set(ALL_SCHEMA_FILES "") # Track these separately for the flatc loop
+set(ALL_SCHEMA_FILES "")
+set(ALL_RUST_FILES "")
 
-file(GLOB_RECURSE C_SRC_FILES "c/*.cc")
-file(GLOB_RECURSE C_HDR_FILES "c/*.h")
+file(GLOB_RECURSE C_SRC_FILES "${LITERTLM_PROJECT_ROOT}/c/*.cc")
+file(GLOB_RECURSE C_HDR_FILES "${LITERTLM_PROJECT_ROOT}/c/*.h")
 
-file(GLOB_RECURSE RUNTIME_SRC_FILES "runtime/*.cc")
-file(GLOB_RECURSE RUNTIME_HDR_FILES "runtime/*.h")
+file(GLOB_RECURSE RUNTIME_SRC_FILES "${LITERTLM_PROJECT_ROOT}/runtime/*.cc")
+file(GLOB_RECURSE RUNTIME_HDR_FILES "${LITERTLM_PROJECT_ROOT}/runtime/*.h")
 
-file(GLOB_RECURSE SCHEMA_SRC_FILES "schema/*.cc")
-file(GLOB_RECURSE SCHEMA_HDR_FILES "schema/*.h")
-file(GLOB_RECURSE SCHEMA_FBS_FILES "schema/*.fbs")
+file(GLOB_RECURSE SCHEMA_SRC_FILES "${LITERTLM_PROJECT_ROOT}/schema/*.cc")
+file(GLOB_RECURSE SCHEMA_HDR_FILES "${LITERTLM_PROJECT_ROOT}/schema/*.h")
+file(GLOB_RECURSE SCHEMA_FBS_FILES "${LITERTLM_PROJECT_ROOT}/schema/*.fbs")
+
+file(GLOB_RECURSE RUST_SRC_FILES "${LITERTLM_PROJECT_ROOT}/src/*.rs")
+file(GLOB_RECURSE RUST_RUNTIME_SRC_FILES "${LITERTLM_PROJECT_ROOT}/runtime/*.rs")
+file(GLOB_RECURSE RUST_TOML_FILES "${LITERTLM_PROJECT_ROOT}/cmake/rust/*.toml")
 
 list(APPEND ALL_SOURCE_FILES ${C_SRC_FILES} ${RUNTIME_SRC_FILES} ${SCHEMA_SRC_FILES})
 list(APPEND ALL_HEADER_FILES ${C_HDR_FILES} ${RUNTIME_HDR_FILES} ${SCHEMA_HDR_FILES})
 list(APPEND ALL_SCHEMA_FILES ${SCHEMA_FBS_FILES})
-
-set(ALL_GENERATED_OUTPUTS ${C_SRC_FILES} ${RUNTIME_SRC_FILES} ${SCHEMA_SRC_FILES})
-
-add_custom_target(generator_complete
-    COMMENT "--- ALL GENERATORS COMPLETE: RELEASING COMPILER GATE ---"
+list(APPEND ALL_RUST_FILES 
+    ${RUST_SRC_FILES} 
+    ${RUST_RUNTIME_SRC_FILES} 
+    ${RUST_TOML_FILES}
 )
 
-add_dependencies(generator_complete
-    litertlm_generated_protobuf
-    litertlm_cxx_bridge
-)
+set(ALL_GENERATED_OUTPUTS 
+    ${C_SRC_FILES}
+    ${RUNTIME_SRC_FILES}
+    ${SCHEMA_SRC_FILES}
+    ${RUST_SRC_FILES})

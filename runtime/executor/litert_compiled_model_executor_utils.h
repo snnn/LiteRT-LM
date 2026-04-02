@@ -28,6 +28,7 @@
 #include "absl/strings/string_view.h"  // from @com_google_absl
 #include "litert/cc/litert_model.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer.h"  // from @litert
+#include "runtime/components/embedding_lookup/embedding_lookup_manager.h"
 #include "runtime/components/model_resources.h"
 #include "runtime/executor/executor_settings_base.h"
 #include "runtime/proto/sampler_params.pb.h"
@@ -70,7 +71,7 @@ struct ModelSignatures {
 };
 
 // Get the corresponding ModelSignatures struct for the given model using
-// the signature runner. Returns an error if the the runner's signature does not
+// the signature runner. Returns an error if the runner's signature does not
 // match any of the predefined signature set.
 // For now, we should use decode runner, since it contains all input and output
 // signatures of the model.
@@ -135,6 +136,13 @@ absl::Status FillSingleBufferCacheParamTensor(
 // Supports .task and .litertlm formats.
 absl::StatusOr<std::unique_ptr<ModelResources>>
 BuildLiteRtCompiledModelResources(const ModelAssets& model_assets);
+
+// Computes token embeddings using the given lookup managers.
+absl::Status GenericComputeTokenEmbeddings(
+    const TensorBuffer& input_tokens, absl::Span<float> output_embeddings,
+    absl::Span<float> output_ple_embeddings,
+    EmbeddingLookupManager* embedding_lookup_manager,
+    EmbeddingLookupManager* per_layer_embedding_lookup_manager);
 
 }  // namespace litert::lm
 

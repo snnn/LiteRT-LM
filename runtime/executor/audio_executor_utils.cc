@@ -31,7 +31,7 @@
 namespace litert::lm {
 namespace {
 
-constexpr absl::string_view kPrevMaskName = "prev_mask";
+constexpr absl::string_view kPrevPrefix = "prev_";
 constexpr absl::string_view kFeatureStatesNamePattern = "feature_state";
 constexpr absl::string_view kSegmentMaskName = "segment_mask";
 constexpr absl::string_view kMaskName = "mask";
@@ -41,7 +41,7 @@ bool IsStreamingEncoder(const std::vector<absl::string_view>& input_names) {
   // input names contain the prev_mask name.
   return std::any_of(input_names.begin(), input_names.end(),
                      [](absl::string_view input_name) {
-                       return absl::StrContains(input_name, kPrevMaskName);
+                       return absl::StrContains(input_name, kPrevPrefix);
                      });
 }
 

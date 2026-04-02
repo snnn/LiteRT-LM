@@ -15,6 +15,17 @@
 load("@org_tensorflow//tensorflow:pytype.default.bzl", "pytype_strict_binary")
 
 pytype_strict_binary(
+    name = "multimodal_main",
+    srcs = ["multimodal_main.py"],
+    tags = ["notap"],
+    deps = [
+        "//python/litert_lm",
+        "@absl_py//absl:app",
+        "@absl_py//absl/flags",
+    ],
+)
+
+pytype_strict_binary(
     name = "tool_main",
     srcs = ["tool_main.py"],
     tags = ["notap"],

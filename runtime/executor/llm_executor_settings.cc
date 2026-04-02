@@ -77,8 +77,8 @@ std::ostream& operator<<(std::ostream& os, const AdvancedSettings& settings) {
   os << "convert_weights_on_gpu: " << settings.convert_weights_on_gpu << "\n";
   os << "wait_for_weights_conversion_complete_in_benchmark: "
      << settings.wait_for_weights_conversion_complete_in_benchmark << "\n";
-  os << "optimize_shader_compilation: "
-     << settings.optimize_shader_compilation << "\n";
+  os << "optimize_shader_compilation: " << settings.optimize_shader_compilation
+     << "\n";
   os << "cache_compiled_shaders_only: " << settings.cache_compiled_shaders_only
      << "\n";
   os << "share_constant_tensors: " << settings.share_constant_tensors << "\n";
@@ -101,6 +101,10 @@ std::ostream& operator<<(std::ostream& os, const AdvancedSettings& settings) {
   } else {
     os << "gpu_context_low_priority: Not set\n";
   }
+  os << "enable_speculative_decoding: " << settings.enable_speculative_decoding
+     << "\n";
+  os << "disable_delegate_clustering: " << settings.disable_delegate_clustering
+     << "\n";
   return os;
 }
 

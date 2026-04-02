@@ -11,7 +11,6 @@ Note that `bazel` is the recommended build system. The `CMake` build system is
 added recently and still under active development.
 
 *   [Build and Run using Bazel](./getting-started/build-and-run.md)
-*   [Evaluation and Benchmarking](./getting-started/evaluation.md)
 *   [(preliminary) CMake](./getting-started/cmake.md)
 
 ## API Reference
@@ -25,8 +24,8 @@ Here you will find detailed information about the LiteRT-LM APIs.
     *   [Advanced: ANTLR for Tool Use](./api/cpp/tool-use-antlr.md)
 *   **Kotlin API**
     *   [Kotlin API](./api/kotlin/getting_started.md)
-*   **Plans**
-    *   [`lm-eval` Backend Patch Plan](./lm_eval_backend_patch_plan.md)
+*   **Python API**
+    *   [Python API](./api/python/getting_started.md)
 
 ## Reporting Issues
 

@@ -29,6 +29,7 @@
 #include "litert/cc/litert_environment.h"  // from @litert
 #include "litert/cc/litert_layout.h"  // from @litert
 #include "litert/cc/litert_model.h"  // from @litert
+#include "litert/cc/litert_options.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer.h"  // from @litert
 #include "runtime/components/embedding_lookup/embedding_lookup.h"
 
@@ -45,7 +46,8 @@ class EndOfMultiModalEmbedding : public EmbeddingLookup {
   // multi-modal embedding. If the special token is not found in the tokens,
   // the end of multi-modal embedding will not be inserted.
   static absl::StatusOr<std::unique_ptr<EndOfMultiModalEmbedding>> Create(
-      const litert::Model* absl_nonnull model, int special_token);
+      const litert::Model* absl_nonnull model, int special_token,
+      litert::Environment* absl_nullable env = nullptr);
 
   // Multimodal embeddings are not supported during decode.
   absl::Status LookupDecode(int token,
@@ -73,16 +75,16 @@ class EndOfMultiModalEmbedding : public EmbeddingLookup {
                              size_t byte_offset) override;
 
  protected:
-  EndOfMultiModalEmbedding(litert::Environment env,
+  EndOfMultiModalEmbedding(litert::Environment& env,
                            const litert::Model* absl_nonnull model,
                            int special_token)
-      : env_(std::move(env)), model_(*model), special_token_(special_token) {}
+      : env_(env), model_(*model), special_token_(special_token) {}
 
   // Loads the provided model. This must be called before Lookup functions.
   absl::Status Initialize();
 
   // The environment for the embedding lookup.
-  litert::Environment env_;
+  litert::Environment& env_;
   // The model for the embedding lookup. The actual model instance is owned by
   // the model resources.
   const litert::Model& model_;

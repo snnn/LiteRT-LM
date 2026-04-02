@@ -390,9 +390,9 @@ LITERTLM_JNIEXPORT jlong JNICALL JNI_METHOD(nativeCreateEngine)(
     JNIEnv* env, jclass thiz, jstring model_path, jstring backend,
     jstring vision_backend, jstring audio_backend, jint max_num_tokens,
     jstring cache_dir, jboolean enable_benchmark,
-    jstring main_npu_native_library_dir, jstring vision_npu_native_library_dir,
-    jstring audio_npu_native_library_dir, jint main_backend_num_threads,
-    jint audio_backend_num_threads) {
+    jboolean enable_speculative_decoding, jstring main_npu_native_library_dir,
+    jstring vision_npu_native_library_dir, jstring audio_npu_native_library_dir,
+    jint main_backend_num_threads, jint audio_backend_num_threads) {
   const char* model_path_chars = env->GetStringUTFChars(model_path, nullptr);
   std::string model_path_str(model_path_chars);
   env->ReleaseStringUTFChars(model_path, model_path_chars);
@@ -533,6 +533,15 @@ LITERTLM_JNIEXPORT jlong JNICALL JNI_METHOD(nativeCreateEngine)(
 
   if (enable_benchmark) {
     settings->GetMutableBenchmarkParams();
+  }
+
+  if (enable_speculative_decoding) {
+    auto advanced_settings =
+        settings->GetMainExecutorSettings().GetAdvancedSettings().value_or(
+            litert::lm::AdvancedSettings());
+    advanced_settings.enable_speculative_decoding = true;
+    settings->GetMutableMainExecutorSettings().SetAdvancedSettings(
+        advanced_settings);
   }
 
   auto engine = EngineFactory::CreateAny(*settings);
@@ -829,7 +838,7 @@ JNI_METHOD(nativeConversationGetBenchmarkInfo)(JNIEnv* env, jclass thiz,
 LITERTLM_JNIEXPORT jlong JNICALL JNI_METHOD(nativeCreateConversation)(
     JNIEnv* env, jclass thiz, jlong engine_pointer, jobject sampler_config_obj,
     jstring messages_json_string, jstring tools_description_json_string,
-    jboolean enable_constrained_decoding) {
+    jstring channels_json_string, jboolean enable_constrained_decoding) {
   Engine* engine = reinterpret_cast<Engine*>(engine_pointer);
 
   // Create a native SessionConfig
@@ -864,13 +873,37 @@ LITERTLM_JNIEXPORT jlong JNICALL JNI_METHOD(nativeCreateConversation)(
     return 0;
   }
 
-  // Create the conversation
-  auto conversation_config =
+  // Create a ConversationConfig::Builder
+  auto conversation_config_builder =
       ConversationConfig::Builder()
           .SetSessionConfig(session_config)
           .SetPreface(json_preface)
-          .SetEnableConstrainedDecoding(enable_constrained_decoding)
-          .Build(*engine);
+          .SetEnableConstrainedDecoding(enable_constrained_decoding);
+
+  // Set the channels, if provided.
+  // If channels is nullptr, the Conversation will use the channels defined in
+  // the LlmMetadata or the default channels for the model type.
+  // If channels is an empty array, channels will be disabled.
+  if (channels_json_string != nullptr) {
+    const char* channels_chars =
+        env->GetStringUTFChars(channels_json_string, nullptr);
+    std::string channels_json_str(channels_chars);
+    env->ReleaseStringUTFChars(channels_json_string, channels_chars);
+    auto channels_json = nlohmann::ordered_json::parse(channels_json_str);
+
+    std::vector<litert::lm::Channel> channels;
+    if (channels_json.is_array()) {
+      for (const auto& channel_item : channels_json) {
+        channels.push_back({channel_item["channel_name"].get<std::string>(),
+                            channel_item["start"].get<std::string>(),
+                            channel_item["end"].get<std::string>()});
+      }
+    }
+    conversation_config_builder.SetChannels(channels);
+  }
+
+  // Build the conversation
+  auto conversation_config = conversation_config_builder.Build(*engine);
 
   if (!conversation_config.ok()) {
     ThrowLiteRtLmJniException(env, "Failed to create conversation config: " +

@@ -21,11 +21,18 @@ set(FLATBUFFERS_INCLUDE_DIR ${FLATBUFFERS_INSTALL_PREFIX}/include CACHE INTERNAL
 set(FLATBUFFERS_SRC_DIR ${FLATBUFFERS_EXT_PREFIX}/src CACHE INTERNAL "")
 set(FLATBUFFERS_BIN_DIR ${FLATBUFFERS_INSTALL_PREFIX}/bin CACHE INTERNAL "")
 set(FLATBUFFERS_LIB_DIR ${FLATBUFFERS_INSTALL_PREFIX}/lib CACHE INTERNAL "")
-
-
 set(FLATBUFFERS_DIR ${FLATBUFFERS_LIB_DIR}/cmake/flatbuffers CACHE INTERNAL "")
 set(FLATBUFFERS_CMAKE_CONFIG_FILE ${FLATBUFFERS_LIB_DIR}/cmake/flatbuffers/flatbuffers-config.cmake CACHE INTERNAL "")
+set(FLATBUFFERS_FLATC_EXECUTABLE "${FLATBUFFERS_BIN_DIR}/flatc" CACHE INTERNAL "")
 set(FLATC_EXECUTABLE "${FLATBUFFERS_BIN_DIR}/flatc" CACHE INTERNAL "")
+
+if(DEFINED LITERTLM_HOST_FLATC)
+    message(STATUS "[LiteRTLM] FlatBuffers: Using host flatc at ${LITERTLM_HOST_FLATC_BIN_DIR}")
+    set(FLATBUFFERS_BIN_DIR "${LITERTLM_HOST_BIN_DIR}" CACHE INTERNAL "Host Flatbuffers binary path")
+    set(FLATBUFFERS_FLATC_EXECUTABLE "${LITERTLM_HOST_FLATC}" CACHE INTERNAL "Host flatc")
+    set(FLATC_EXECUTABLE "${LITERTLM_HOST_FLATC}" CACHE INTERNAL "Host flatc")
+
+endif()
 
 setup_external_install_structure("${FLATBUFFERS_INSTALL_PREFIX}")
 
@@ -46,6 +53,8 @@ if(NOT EXISTS "${FLATBUFFERS_CMAKE_CONFIG_FILE}")
     PATCH_COMMAND
       git checkout -- . && git clean -df
     CMAKE_ARGS
+        ${LITERTLM_TOOLCHAIN_FILE}
+        ${LITERTLM_TOOLCHAIN_ARGS}
         -DCMAKE_INSTALL_PREFIX=${FLATBUFFERS_INSTALL_PREFIX}
         -DCMAKE_INSTALL_LIBDIR=lib
         -DCMAKE_BUILD_TYPE=Release
@@ -57,8 +66,6 @@ if(NOT EXISTS "${FLATBUFFERS_CMAKE_CONFIG_FILE}")
         -DFLATBUFFERS_BUILD_FLATC=ON
         -DFLATBUFFERS_BUILD_FLATHASH=OFF
         -DFLATBUFFERS_CPP_STD=20
-    STEP_TARGETS
-      step_verify_install
   )
   ExternalProject_Add_Step(flatbuffers_external compile_schemas
     COMMAND ${CMAKE_COMMAND}
@@ -71,9 +78,8 @@ if(NOT EXISTS "${FLATBUFFERS_CMAKE_CONFIG_FILE}")
     COMMENT "[LiteRTLM] Batch compiling all Flatbuffer schemas..."
     ALWAYS 1 # Force check on every build in case schemas changed
 )
-  verify_install(flatbuffers_external ${FLATBUFFERS_CMAKE_CONFIG_FILE})
 else()
-    message(STATUS "Flatbuffers already installed at: ${FLATBUFFERS_INSTALL_PREFIX}")
+    message(STATUS "[LiteRTLM] Flatbuffers already installed at: ${FLATBUFFERS_INSTALL_PREFIX}")
     if(NOT TARGET flatbuffers_external)
         add_custom_target(flatbuffers_external)
     endif()

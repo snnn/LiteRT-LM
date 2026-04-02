@@ -26,3 +26,5 @@ filegroup(
         exclude = ["BUILD"],
     ),
 )
+
+exports_files(["have_a_wonderful_day.wav"])

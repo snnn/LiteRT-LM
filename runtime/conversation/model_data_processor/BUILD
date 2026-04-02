@@ -30,6 +30,7 @@ cc_library(
     deps = [
         ":function_gemma_data_processor_config",
         ":gemma3_data_processor_config",
+        ":gemma4_data_processor_config",
         ":generic_data_processor_config",
         ":qwen3_data_processor_config",
     ],
@@ -93,7 +94,6 @@ cc_library(
     hdrs = ["model_data_processor.h"],
     deps = [
         ":config_registry",
-        "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -115,6 +115,8 @@ cc_library(
         ":function_gemma_data_processor_config",
         ":gemma3_data_processor",
         ":gemma3_data_processor_config",
+        ":gemma4_data_processor",
+        ":gemma4_data_processor_config",
         ":generic_data_processor",
         ":generic_data_processor_config",
         ":model_data_processor",
@@ -140,6 +142,7 @@ cc_test(
         ":config_registry",
         ":function_gemma_data_processor_config",
         ":gemma3_data_processor_config",
+        ":gemma4_data_processor_config",
         ":generic_data_processor_config",
         ":model_data_processor",
         ":model_data_processor_factory",
@@ -339,5 +342,44 @@ cc_test(
         "//runtime/conversation:io_types",
         "//runtime/engine:io_types",
         "//runtime/util:test_utils",
+    ],
+)
+
+cc_library(
+    name = "gemma4_data_processor_config",
+    hdrs = ["gemma4_data_processor_config.h"],
+)
+
+cc_library(
+    name = "gemma4_data_processor",
+    srcs = ["gemma4_data_processor.cc"],
+    hdrs = ["gemma4_data_processor.h"],
+    deps = [
+        ":data_utils",
+        ":gemma4_data_processor_config",
+        ":model_data_processor",
+        "@com_google_absl//absl/log:absl_log",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@nlohmann_json//:json",
+        "//runtime/components:sentencepiece_tokenizer",
+        "//runtime/components:tokenizer",
+        "//runtime/components/constrained_decoding:constraint",
+        "//runtime/components/constrained_decoding:gemma_model_constraint_provider_lib",
+        "//runtime/components/preprocessor:audio_preprocessor",
+        "//runtime/components/preprocessor:audio_preprocessor_miniaudio",
+        "//runtime/components/preprocessor:image_preprocessor",
+        "//runtime/components/preprocessor:stb_image_preprocessor",
+        "//runtime/components/tool_use:fc_tool_format_utils",
+        "//runtime/components/tool_use:parser_utils",
+        "//runtime/conversation:io_types",
+        "//runtime/engine:io_types",
+        "//runtime/util:litert_status_util",
+        "//runtime/util:memory_mapped_file",
+        "@com_googlesource_code_re2//:re2",
+        "@sentencepiece//:sentencepiece_model_cc_proto",
     ],
 )

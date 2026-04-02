@@ -13,6 +13,21 @@
 # limitations under the License.
 
 
+# Updated on 2026-03-25.
+# Copyright 2026 Google LLC.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 
 set(TFLITE_TARGET_MAP
     "tensorflow-lite=${TFLITE_BUILD_DIR}/libtensorflow-lite.a"
@@ -68,6 +83,12 @@ set(TFLITE_TARGET_MAP
     "tflite_example_proto=${TFLITE_BUILD_DIR}/example_proto_generated/libexample_proto.a"
     "tflite_profiling=${TFLITE_LIB_DIR}/libtflite_profiling.a"
 )
+
+if(LITERTLM_TOOLCHAIN_ARGS)
+    message(STATUS "[LiteRTLM] Cross-compilation detected: Appending ARM64 targets.")
+    list(APPEND TFLITE_TARGET_MAP "kleidiai=${TFLITE_LIB_DIR}/libkleidiai.a")
+endif()
+
 
 # Exhaustive targets for Shim Redirection
 set(_tflite_exhaustive_targets

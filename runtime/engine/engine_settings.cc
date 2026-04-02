@@ -295,6 +295,11 @@ absl::Status EngineSettings::MaybeUpdateAndValidate(
     main_executor_settings_.SetAdvancedSettings(advanced_settings);
   }
 
+  // Disable delegate clustering for Gemma 4 models.
+  if (metadata.has_llm_model_type() && metadata.llm_model_type().has_gemma4()) {
+    advanced_settings.disable_delegate_clustering = true;
+    main_executor_settings_.SetAdvancedSettings(advanced_settings);
+  }
   if (IsBenchmarkEnabled()) {
     advanced_settings.is_benchmark = true;
     main_executor_settings_.SetAdvancedSettings(advanced_settings);
@@ -420,6 +425,8 @@ std::ostream& operator<<(std::ostream& os, const EngineSettings& settings) {
   } else {
     os << "  AudioExecutorSettings: Not set" << std::endl;
   }
+  os << "  ParallelFileSectionLoading: "
+     << settings.GetParallelFileSectionLoading() << std::endl;
   return os;
 }
 
@@ -428,6 +435,15 @@ proto::LlmMetadata& EngineSettings::GetMutableLlmMetadata() {
     metadata_ = proto::LlmMetadata();
   }
   return metadata_.value();
+}
+
+bool EngineSettings::GetParallelFileSectionLoading() const {
+  return parallel_file_section_loading_;
+}
+
+void EngineSettings::SetParallelFileSectionLoading(
+    bool parallel_file_section_loading) {
+  parallel_file_section_loading_ = parallel_file_section_loading;
 }
 
 SessionConfig SessionConfig::CreateDefault() {

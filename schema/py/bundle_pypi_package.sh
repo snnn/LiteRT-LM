@@ -88,7 +88,7 @@ uv pip install setuptools wheel
 uv build --no-build-isolation
 
 # Install the wheel we just built to verify it works!
-uv pip install dist/litert_lm_builder-0.0.1-py3-none-any.whl
+uv pip install dist/litert_lm_builder-*.whl
 
 # Verification checks using the new tools
 litertlm-builder --help

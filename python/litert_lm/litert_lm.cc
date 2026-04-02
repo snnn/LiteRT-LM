@@ -13,32 +13,45 @@
 // limitations under the License.
 
 #include <deque>
+#include <exception>
 #include <map>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
+#include <vector>
 
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/optional.h"  // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"
+#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/unique_ptr.h"   // IWYU pragma: keep
 #include "nanobind/stl/variant.h"      // IWYU pragma: keep
 #include "nanobind/stl/vector.h"       // IWYU pragma: keep
 #include "absl/base/log_severity.h"  // from @com_google_absl
+#include "absl/base/thread_annotations.h"  // from @com_google_absl
+#include "absl/functional/any_invocable.h"  // from @com_google_absl
 #include "absl/log/globals.h"  // from @com_google_absl
+#include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/statusor.h"  // from @com_google_absl
+#include "absl/strings/string_view.h"  // from @com_google_absl
 #include "absl/synchronization/mutex.h"  // from @com_google_absl
 #include "absl/time/time.h"  // from @com_google_absl
+#include "nlohmann/json_fwd.hpp"  // from @nlohmann_json
 #include "nanobind_json/nanobind_json.hpp"  // from @nanobind_json  // IWYU pragma: keep
 #include "litert/c/internal/litert_logging.h"  // from @litert
 #include "runtime/conversation/conversation.h"
+#include "runtime/conversation/io_types.h"
 #include "runtime/engine/engine.h"
 #include "runtime/engine/engine_factory.h"
-#include "runtime/executor/litert_compiled_model_executor_utils.h"
-#include "tflite/core/c/c_api_types.h"  // from @litert
+#include "runtime/engine/engine_settings.h"
+#include "runtime/engine/io_types.h"
+#include "runtime/executor/executor_settings_base.h"
+#include "runtime/executor/llm_executor_settings.h"
 #include "tflite/logger.h"  // from @litert
 #include "tflite/minimal_logging.h"  // from @litert
 
@@ -162,55 +175,6 @@ void SetBackendAttr(nb::object& py_engine, const nb::handle& backend_handle) {
   }
 }
 
-template <typename T>
-std::optional<T> GetOptionalAttr(const nb::object& obj, const char* attr_name) {
-  if (!nb::hasattr(obj, attr_name)) {
-    return std::nullopt;
-  }
-  nb::object attr = obj.attr(attr_name);
-  if (attr.is_none()) {
-    return std::nullopt;
-  }
-  return nb::cast<T>(attr);
-}
-
-SessionConfig ParseSessionOptions(const nb::handle& options) {
-  SessionConfig session_config = SessionConfig::CreateDefault();
-  if (options.is_none()) {
-    return session_config;
-  }
-  nb::object options_obj = nb::borrow<nb::object>(options);
-  auto apply_prompt_template_in_session = GetOptionalAttr<bool>(
-      options_obj, "apply_prompt_template_in_session");
-  if (apply_prompt_template_in_session.has_value()) {
-    session_config.SetApplyPromptTemplateInSession(
-        *apply_prompt_template_in_session);
-  }
-  auto max_output_tokens = GetOptionalAttr<int>(options_obj, "max_output_tokens");
-  if (max_output_tokens.has_value()) {
-    session_config.SetMaxOutputTokens(*max_output_tokens);
-  }
-  auto num_output_candidates =
-      GetOptionalAttr<int>(options_obj, "num_output_candidates");
-  if (num_output_candidates.has_value()) {
-    session_config.SetNumOutputCandidates(*num_output_candidates);
-  }
-  return session_config;
-}
-
-DecodeConfig ParseDecodeOptions(const nb::handle& options) {
-  DecodeConfig decode_config = DecodeConfig::CreateDefault();
-  if (options.is_none()) {
-    return decode_config;
-  }
-  nb::object options_obj = nb::borrow<nb::object>(options);
-  auto max_output_tokens = GetOptionalAttr<int>(options_obj, "max_output_tokens");
-  if (max_output_tokens.has_value()) {
-    decode_config.SetMaxOutputTokens(*max_output_tokens);
-  }
-  return decode_config;
-}
-
 // Helper to convert C++ Responses to Python Responses dataclass.
 nb::object ToPyResponses(const Responses& responses) {
   nb::object py_responses_class =
@@ -221,16 +185,7 @@ nb::object ToPyResponses(const Responses& responses) {
                                             : responses.GetTexts();
   auto scores = responses.GetScores();
   auto token_lengths = responses.GetTokenLengths().value_or(std::vector<int>());
-  auto token_scores =
-      responses.GetTokenScores().value_or(std::vector<std::vector<float>>());
-  auto token_ids =
-      responses.GetTokenIds().value_or(std::vector<std::vector<int>>());
-  auto greedy_token_ids =
-      responses.GetGreedyTokenIds().value_or(std::vector<std::vector<int>>());
-  auto finish_reasons =
-      responses.GetFinishReasons().value_or(std::vector<std::string>());
-  return py_responses_class(texts, scores, token_lengths, token_scores,
-                            token_ids, greedy_token_ids, finish_reasons);
+  return py_responses_class(texts, scores, token_lengths);
 }
 
 // Note: Consider move to C++ API.
@@ -263,7 +218,7 @@ class MessageIterator {
   MessageIterator& operator=(const MessageIterator&) = delete;
 
   void Push(absl::StatusOr<Message> message) {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     queue_.push_back(std::move(message));
   }
 
@@ -271,7 +226,7 @@ class MessageIterator {
     absl::StatusOr<Message> message;
     {
       nb::gil_scoped_release release;
-      absl::MutexLock lock(&mutex_);
+      absl::MutexLock lock(mutex_);
       mutex_.Await(absl::Condition(this, &MessageIterator::HasData));
       message = std::move(queue_.front());
       queue_.pop_front();
@@ -306,6 +261,62 @@ class MessageIterator {
   std::deque<absl::StatusOr<Message>> queue_ ABSL_GUARDED_BY(mutex_);
 };
 
+// ResponsesIterator bridges the asynchronous, callback-based C++ API
+// (Engine::Session::RunDecodeAsync) to Python's synchronous iterator protocol
+// (__iter__ / __next__).
+class ResponsesIterator {
+ public:
+  ResponsesIterator() = default;
+
+  ResponsesIterator(const ResponsesIterator&) = delete;
+  ResponsesIterator& operator=(const ResponsesIterator&) = delete;
+
+  void Push(absl::StatusOr<Responses> responses) {
+    absl::MutexLock lock(mutex_);
+    queue_.push_back(std::move(responses));
+  }
+
+  void SetTaskController(
+      std::unique_ptr<Engine::Session::TaskController> controller) {
+    absl::MutexLock lock(mutex_);
+    controller_ = std::move(controller);
+  }
+
+  nb::object Next() {
+    absl::StatusOr<Responses> responses;
+    {
+      nb::gil_scoped_release release;
+      absl::MutexLock lock(mutex_);
+      mutex_.Await(absl::Condition(this, &ResponsesIterator::HasData));
+      responses = std::move(queue_.front());
+      queue_.pop_front();
+    }
+
+    if (!responses.ok()) {
+      if (absl::IsCancelled(responses.status())) {
+        throw nb::stop_iteration();
+      }
+      throw std::runtime_error(responses.status().ToString());
+    }
+
+    if (responses->GetTexts().empty()) {
+      throw nb::stop_iteration();
+    }
+
+    return ToPyResponses(*responses);
+  }
+
+  bool HasData() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_) {
+    return !queue_.empty();
+  }
+
+ private:
+  absl::Mutex mutex_;
+  std::deque<absl::StatusOr<Responses>> queue_ ABSL_GUARDED_BY(mutex_);
+  std::unique_ptr<Engine::Session::TaskController> controller_
+      ABSL_GUARDED_BY(mutex_);
+};
+
 struct PyBenchmarkInfo {
   double init_time_in_second;
   double time_to_first_token_in_second;
@@ -315,87 +326,17 @@ struct PyBenchmarkInfo {
   double last_decode_tokens_per_second;
 };
 
-std::optional<int> GetBosTokenIdFromEngineSettings(
-    const EngineSettings& engine_settings) {
-  const auto& metadata = engine_settings.GetLlmMetadata();
-  if (!metadata.has_value() || !metadata->has_start_token() ||
-      !metadata->start_token().has_token_ids() ||
-      metadata->start_token().token_ids().ids_size() == 0) {
-    return std::nullopt;
-  }
-  return metadata->start_token().token_ids().ids(0);
-}
-
-std::vector<std::vector<int>> GetEosTokenIdsFromEngineSettings(
-    const EngineSettings& engine_settings) {
-  std::vector<std::vector<int>> stop_token_ids;
-  const auto& metadata = engine_settings.GetLlmMetadata();
-  if (!metadata.has_value()) {
-    return stop_token_ids;
-  }
-  stop_token_ids.reserve(metadata->stop_tokens_size());
-  for (const auto& stop_token : metadata->stop_tokens()) {
-    if (!stop_token.has_token_ids()) {
-      continue;
-    }
-    stop_token_ids.emplace_back(stop_token.token_ids().ids().begin(),
-                                stop_token.token_ids().ids().end());
-  }
-  return stop_token_ids;
-}
-
-absl::StatusOr<std::unique_ptr<Tokenizer>> CreateTokenizerFromEngine(
-    const Engine& engine) {
-  const auto& model_assets =
-      engine.GetEngineSettings().GetMainExecutorSettings().GetModelAssets();
-  ASSIGN_OR_RETURN(auto model_resources,
-                   BuildLiteRtCompiledModelResources(model_assets));
-  return model_resources->GetTokenizer();
-}
-
-class PyTokenizer {
- public:
-  PyTokenizer(std::unique_ptr<Tokenizer> tokenizer,
-              std::optional<int> bos_token_id,
-              std::vector<std::vector<int>> eos_token_ids)
-      : tokenizer_(std::move(tokenizer)),
-        bos_token_id_(bos_token_id),
-        eos_token_ids_(std::move(eos_token_ids)) {}
-
-  PyTokenizer(const PyTokenizer&) = delete;
-  PyTokenizer& operator=(const PyTokenizer&) = delete;
-  PyTokenizer(PyTokenizer&&) = default;
-  PyTokenizer& operator=(PyTokenizer&&) = default;
-
-  std::vector<int> Encode(std::string_view text) {
-    return VALUE_OR_THROW(tokenizer_->TextToTokenIds(text));
-  }
-
-  std::string Decode(const std::vector<int>& token_ids) {
-    return VALUE_OR_THROW(tokenizer_->TokenIdsToText(token_ids));
-  }
-
-  std::optional<int> GetBosTokenId() const { return bos_token_id_; }
-
-  const std::vector<std::vector<int>>& GetEosTokenIds() const {
-    return eos_token_ids_;
-  }
-
- private:
-  std::unique_ptr<Tokenizer> tokenizer_;
-  std::optional<int> bos_token_id_;
-  std::vector<std::vector<int>> eos_token_ids_;
-};
-
 class Benchmark {
  public:
   Benchmark(std::string model_path, Backend backend, int prefill_tokens,
-            int decode_tokens, std::string cache_dir)
+            int decode_tokens, std::string cache_dir,
+            std::optional<bool> enable_speculative_decoding)
       : model_path_(std::move(model_path)),
         backend_(backend),
         prefill_tokens_(prefill_tokens),
         decode_tokens_(decode_tokens),
-        cache_dir_(std::move(cache_dir)) {}
+        cache_dir_(std::move(cache_dir)),
+        enable_speculative_decoding_(enable_speculative_decoding) {}
 
   PyBenchmarkInfo Run() {
     auto model_assets = VALUE_OR_THROW(ModelAssets::Create(model_path_));
@@ -404,6 +345,20 @@ class Benchmark {
 
     if (!cache_dir_.empty()) {
       settings.GetMutableMainExecutorSettings().SetCacheDir(cache_dir_);
+    }
+
+    if (enable_speculative_decoding_.has_value()) {
+      AdvancedSettings advanced_settings;
+      if (settings.GetMutableMainExecutorSettings()
+              .GetAdvancedSettings()
+              .has_value()) {
+        advanced_settings =
+            *settings.GetMutableMainExecutorSettings().GetAdvancedSettings();
+      }
+      advanced_settings.enable_speculative_decoding =
+          *enable_speculative_decoding_;
+      settings.GetMutableMainExecutorSettings().SetAdvancedSettings(
+          advanced_settings);
     }
 
     auto& benchmark_params = settings.GetMutableBenchmarkParams();
@@ -480,6 +435,8 @@ class Benchmark {
   int decode_tokens_;
   // Directory for caching compiled model artifacts.
   std::string cache_dir_;
+  // Speculative decoding mode.
+  std::optional<bool> enable_speculative_decoding_;
 };
 
 NB_MODULE(litert_lm_ext, module) {
@@ -498,7 +455,8 @@ NB_MODULE(litert_lm_ext, module) {
       [](std::string_view model_path, const nb::handle& backend,
          int max_num_tokens, std::string_view cache_dir,
          const nb::handle& vision_backend, const nb::handle& audio_backend,
-         std::string_view input_prompt_as_hint) {
+         std::string_view input_prompt_as_hint,
+         std::optional<bool> enable_speculative_decoding) {
         Backend main_backend = ParseBackend(backend);
         std::optional<Backend> vision_backend_opt = std::nullopt;
         if (!vision_backend.is_none()) {
@@ -520,6 +478,20 @@ NB_MODULE(litert_lm_ext, module) {
               std::string(cache_dir));
         }
 
+        if (enable_speculative_decoding.has_value()) {
+          AdvancedSettings advanced_settings;
+          if (settings.GetMutableMainExecutorSettings()
+                  .GetAdvancedSettings()
+                  .has_value()) {
+            advanced_settings = *settings.GetMutableMainExecutorSettings()
+                                     .GetAdvancedSettings();
+          }
+          advanced_settings.enable_speculative_decoding =
+              *enable_speculative_decoding;
+          settings.GetMutableMainExecutorSettings().SetAdvancedSettings(
+              advanced_settings);
+        }
+
         auto engine = VALUE_OR_THROW(
             EngineFactory::CreateDefault(settings, input_prompt_as_hint));
 
@@ -528,13 +500,18 @@ NB_MODULE(litert_lm_ext, module) {
         SetBackendAttr(py_engine, backend);
         py_engine.attr("max_num_tokens") = max_num_tokens;
         py_engine.attr("cache_dir") = cache_dir;
+        py_engine.attr("vision_backend") = vision_backend;
+        py_engine.attr("audio_backend") = audio_backend;
+        py_engine.attr("enable_speculative_decoding") =
+            enable_speculative_decoding;
         return py_engine;
       },
       nb::arg("model_path"), nb::arg("backend") = nb::none(),
       nb::arg("max_num_tokens") = 4096, nb::arg("cache_dir") = "",
       nb::arg("vision_backend") = nb::none(),
       nb::arg("audio_backend") = nb::none(),
-      nb::arg("input_prompt_as_hint") = "");
+      nb::arg("input_prompt_as_hint") = "",
+      nb::arg("enable_speculative_decoding") = nb::none());
 
   module.def(
       "set_min_log_severity",
@@ -583,12 +560,6 @@ NB_MODULE(litert_lm_ext, module) {
       },
       nb::arg("log_severity"));
 
-  nb::class_<PyTokenizer>(module, "Tokenizer", nb::dynamic_attr())
-      .def("encode", &PyTokenizer::Encode, nb::arg("text"))
-      .def("decode", &PyTokenizer::Decode, nb::arg("token_ids"))
-      .def_prop_ro("bos_token_id", &PyTokenizer::GetBosTokenId)
-      .def_prop_ro("eos_token_ids", &PyTokenizer::GetEosTokenIds);
-
   nb::class_<Engine>(module, "_Engine", nb::dynamic_attr())
       // Support for Python context managers (with statement).
       // __enter__ returns the object itself.
@@ -604,7 +575,8 @@ NB_MODULE(litert_lm_ext, module) {
       .def(
           "create_conversation",
           [](const nb::object& self, const nb::handle& messages,
-             const nb::handle& tools, const nb::handle& tool_event_handler) {
+             const nb::handle& tools, const nb::handle& tool_event_handler,
+             const nb::handle& extra_context) {
             Engine& engine = nb::cast<Engine&>(self);
 
             auto builder = ConversationConfig::Builder();
@@ -639,6 +611,12 @@ NB_MODULE(litert_lm_ext, module) {
               has_preface = true;
             }
 
+            if (!extra_context.is_none()) {
+              json_preface.extra_context =
+                  nb::cast<nlohmann::json>(extra_context);
+              has_preface = true;
+            }
+
             if (has_preface) {
               builder.SetPreface(json_preface);
             }
@@ -651,6 +629,7 @@ NB_MODULE(litert_lm_ext, module) {
             nb::object py_conversation = nb::cast(std::move(conversation));
             py_conversation.attr("_tool_map") = py_tool_map;
             py_conversation.attr("tool_event_handler") = tool_event_handler;
+            py_conversation.attr("extra_context") = extra_context;
             if (messages.is_none()) {
               py_conversation.attr("messages") = nb::list();
             } else {
@@ -665,23 +644,18 @@ NB_MODULE(litert_lm_ext, module) {
           },
           nb::kw_only(), nb::arg("messages") = nb::none(),
           nb::arg("tools") = nb::none(),
-          nb::arg("tool_event_handler") = nb::none())
+          nb::arg("tool_event_handler") = nb::none(),
+          nb::arg("extra_context") = nb::none())
       .def(
           "create_session",
-          [](Engine& self, const nb::handle& options) {
-            return VALUE_OR_THROW(self.CreateSession(ParseSessionOptions(options)));
+          [](Engine& self, bool apply_prompt_template) {
+            auto session_config = SessionConfig::CreateDefault();
+            session_config.SetApplyPromptTemplateInSession(
+                apply_prompt_template);
+            return VALUE_OR_THROW(self.CreateSession(session_config));
           },
-          nb::arg("options") = nb::none(),
-          "Creates a new session for this engine.")
-      .def(
-          "get_tokenizer",
-          [](const Engine& self) {
-            return std::make_unique<PyTokenizer>(
-                VALUE_OR_THROW(CreateTokenizerFromEngine(self)),
-                GetBosTokenIdFromEngineSettings(self.GetEngineSettings()),
-                GetEosTokenIdsFromEngineSettings(self.GetEngineSettings()));
-          },
-          "Returns the tokenizer associated with this engine.");
+          nb::kw_only(), nb::arg("apply_prompt_template") = true,
+          "Creates a new session for this engine.");
 
   nb::class_<Engine::Session>(module, "Session", nb::dynamic_attr(),
                               "Session is responsible for hosting the "
@@ -702,6 +676,7 @@ NB_MODULE(litert_lm_ext, module) {
           "run_prefill",
           [](Engine::Session& self, const std::vector<std::string>& contents) {
             std::vector<InputData> input_data;
+            input_data.reserve(contents.size());
             for (const auto& text : contents) {
               input_data.emplace_back(InputText(text));
             }
@@ -713,31 +688,33 @@ NB_MODULE(litert_lm_ext, module) {
           "prompt/query into multiple chunks and call this function multiple "
           "times.")
       .def(
-          "run_prefill_token_ids",
-          [](Engine::Session& self, const std::vector<int>& token_ids) {
-            auto token_id_buffer =
-                VALUE_OR_THROW(Tokenizer::TokenIdsToTensorBuffer(token_ids));
-            std::vector<InputData> input_data;
-            input_data.emplace_back(InputText(std::move(token_id_buffer)));
-            STATUS_OR_THROW(self.RunPrefill(input_data));
-          },
-          nb::arg("token_ids"),
-          "Adds already-tokenized input ids to the session prefill state.")
-      .def(
           "run_decode",
-          [](Engine::Session& self, const nb::handle& options) {
-            return ToPyResponses(
-                VALUE_OR_THROW(self.RunDecode(ParseDecodeOptions(options))));
+          [](Engine::Session& self) {
+            return ToPyResponses(VALUE_OR_THROW(self.RunDecode()));
           },
-          nb::arg("options") = nb::none(),
           "Starts the decoding process for the model to predict the response "
           "based on the input prompt/query added after using run_prefill "
           "function.")
+      .def(
+          "run_decode_async",
+          [](Engine::Session& self) {
+            auto iterator = std::make_shared<ResponsesIterator>();
+            absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback =
+                [iterator](absl::StatusOr<Responses> responses) {
+                  iterator->Push(std::move(responses));
+                };
+            auto task_controller_or = self.RunDecodeAsync(std::move(callback));
+            STATUS_OR_THROW(task_controller_or.status());
+            iterator->SetTaskController(std::move(*task_controller_or));
+            return iterator;
+          },
+          "Starts the decoding process asynchronously.")
       .def(
           "run_text_scoring",
           [](Engine::Session& self, const std::vector<std::string>& target_text,
              bool store_token_lengths) {
             std::vector<absl::string_view> target_text_views;
+            target_text_views.reserve(target_text.size());
             for (const auto& text : target_text) {
               target_text_views.push_back(text);
             }
@@ -746,17 +723,8 @@ NB_MODULE(litert_lm_ext, module) {
           },
           nb::arg("target_text"), nb::arg("store_token_lengths") = false,
           "Scores the target text after the prefill process is done.")
-      .def(
-          "run_token_scoring",
-          [](Engine::Session& self,
-             const std::vector<std::vector<int>>& target_token_ids,
-             bool store_token_lengths) {
-            return ToPyResponses(VALUE_OR_THROW(
-                self.RunTokenIdScoring(target_token_ids, store_token_lengths)));
-          },
-          nb::arg("target_token_ids"),
-          nb::arg("store_token_lengths") = false,
-          "Scores the target token ids after the prefill process is done.");
+      .def("cancel_process", &Engine::Session::CancelProcess,
+           "Cancels the ongoing inference process.");
 
   nb::class_<Conversation>(module, "Conversation", nb::dynamic_attr())
       // Support for Python context managers (with statement).
@@ -828,25 +796,6 @@ NB_MODULE(litert_lm_ext, module) {
               tool_event_handler = self.attr("tool_event_handler");
             }
 
-            if (tool_map.empty() && tool_event_handler.is_none()) {
-              struct SimpleCallback {
-                std::shared_ptr<MessageIterator> iterator;
-
-                void operator()(absl::StatusOr<Message> message) const {
-                  iterator->Push(std::move(message));
-                }
-              };
-
-              absl::Status status = conversation.SendMessageAsync(
-                  json_message, SimpleCallback{iterator});
-              if (!status.ok()) {
-                std::stringstream error_msg_stream;
-                error_msg_stream << "SendMessageAsync failed: " << status;
-                throw std::runtime_error(error_msg_stream.str());
-              }
-              return iterator;
-            }
-
             struct AsyncState {
               int tool_call_count = 0;
               nlohmann::json pending_tool_response = nullptr;
@@ -881,7 +830,8 @@ NB_MODULE(litert_lm_ext, module) {
                       HandleToolCalls(json_msg, tool_map, tool_event_handler);
                 }
 
-                if (json_msg.contains("content")) {
+                if (json_msg.contains("content") ||
+                    json_msg.contains("channels")) {
                   iterator->Push(std::move(message));
                 } else if (json_msg.empty()) {
                   if (state->pending_tool_response != nullptr) {
@@ -929,13 +879,18 @@ NB_MODULE(litert_lm_ext, module) {
       .def("__iter__", [](nb::handle self) { return self; })
       .def("__next__", &MessageIterator::Next);
 
+  nb::class_<ResponsesIterator>(module, "ResponsesIterator")
+      .def("__iter__", [](nb::handle self) { return self; })
+      .def("__next__", &ResponsesIterator::Next);
+
   module.def(
       "Benchmark",
       [](std::string_view model_path, const nb::handle& backend,
-         int prefill_tokens, int decode_tokens, std::string_view cache_dir) {
+         int prefill_tokens, int decode_tokens, std::string_view cache_dir,
+         std::optional<bool> enable_speculative_decoding) {
         auto benchmark = std::make_unique<Benchmark>(
             std::string(model_path), ParseBackend(backend), prefill_tokens,
-            decode_tokens, std::string(cache_dir));
+            decode_tokens, std::string(cache_dir), enable_speculative_decoding);
 
         nb::object py_benchmark = nb::cast(std::move(benchmark));
         py_benchmark.attr("model_path") = model_path;
@@ -943,11 +898,14 @@ NB_MODULE(litert_lm_ext, module) {
         py_benchmark.attr("prefill_tokens") = prefill_tokens;
         py_benchmark.attr("decode_tokens") = decode_tokens;
         py_benchmark.attr("cache_dir") = cache_dir;
+        py_benchmark.attr("enable_speculative_decoding") =
+            enable_speculative_decoding;
         return py_benchmark;
       },
       nb::arg("model_path"), nb::arg("backend") = nb::none(),
       nb::arg("prefill_tokens") = 256, nb::arg("decode_tokens") = 256,
-      nb::arg("cache_dir") = "");
+      nb::arg("cache_dir") = "",
+      nb::arg("enable_speculative_decoding") = nb::none());
 
   nb::class_<PyBenchmarkInfo>(module, "BenchmarkInfo",
                               "Data class to hold benchmark information.")

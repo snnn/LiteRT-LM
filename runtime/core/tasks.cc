@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -30,7 +31,6 @@
 #include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/statusor.h"  // from @com_google_absl
 #include "absl/strings/str_cat.h"  // from @com_google_absl
-#include "absl/strings/str_format.h"  // from @com_google_absl
 #include "absl/strings/str_replace.h"  // from @com_google_absl
 #include "absl/strings/string_view.h"  // from @com_google_absl
 #include "absl/types/span.h"  // from @com_google_absl
@@ -138,51 +138,80 @@ class DecodeOneStep {
     ASSIGN_OR_RETURN(auto token_ids, DecodeAndSample(std::move(decoded_ids)));
     token_ids_ = token_ids;
 
-    // Regardless of BPE, we always process the next tokens to detect stop
-    // tokens.
-    RETURN_IF_ERROR(stop_token_detector_.ProcessTokens(token_ids));
+    size_t sequence_length = token_ids[0].size();
+    for (size_t i = 1; i < token_ids.size(); ++i) {
+      RET_CHECK_EQ(token_ids[i].size(), sequence_length)
+          << "The current implementation of ProcessTokens() requires that "
+             "latest_tokens must contain sequences of the same length.";
+    }
 
-    // Merge BPE partial token ids with the next token ids if any.
-    ASSIGN_OR_RETURN(
-        token_ids, tokenizer_.MergeTokenIds(bpe_partial_token_ids_, token_ids));
-
-    auto decoded_result =
-        tokenizer_.TokenIdsToTexts(num_output_candidates_, token_ids);
     for (int i = 0; i < num_output_candidates_; ++i) {
-      result_text_[i] = "";
-      if (Tokenizer::IsIncompleteBpeSequence(decoded_result.value()[i])) {
-        bpe_partial_token_ids_[i] = token_ids[i];
-      } else if (!stop_token_detector_.GetStopTokensFound()[i]) {
-        bpe_partial_token_ids_[i].clear();
+      result_text_[i].clear();
+    }
 
-        // Handle partial stop tokens.
-        int max_length = stop_token_detector_.MaxPartialStopTokenLength(i);
-        if (max_length > 0) {
-          pending_stop_tokens_[i].push(decoded_result.value()[i].value());
-        }
-        // We only need the latest max_length tokens for partial stop tokens.
-        // Add the extra ones to the result text and we could keep only the
-        // latest max_length stop tokens in the queue.
-        while (pending_stop_tokens_[i].size() > max_length) {
-          result_text_[i] += pending_stop_tokens_[i].front();
-          pending_stop_tokens_[i].pop();
-        }
+    for (size_t step = 0; step < sequence_length; ++step) {
+      std::vector<std::vector<int>> step_tokens;
+      step_tokens.reserve(num_output_candidates_);
+      for (int batch = 0; batch < num_output_candidates_; ++batch) {
+        step_tokens.push_back({token_ids[batch][step]});
+      }
 
-        // No partial stop token is found - add the current token to the result
-        // text directly - this is the most common case.
-        if (max_length == 0) {
-          result_text_[i] += decoded_result.value()[i].value();
+      // Regardless of BPE, we always process the next tokens to detect stop
+      // tokens.
+      RETURN_IF_ERROR(stop_token_detector_.ProcessTokens(step_tokens));
+
+      // Merge BPE partial token ids with the next token ids if any.
+      ASSIGN_OR_RETURN(step_tokens, tokenizer_.MergeTokenIds(
+                                        bpe_partial_token_ids_, step_tokens));
+
+      auto decoded_result =
+          tokenizer_.TokenIdsToTexts(num_output_candidates_, step_tokens);
+      for (int i = 0; i < num_output_candidates_; ++i) {
+        if (Tokenizer::IsIncompleteBpeSequence(decoded_result.value()[i])) {
+          bpe_partial_token_ids_[i] = step_tokens[i];
+        } else if (!stop_token_detector_.GetStopTokensFound()[i]) {
+          bpe_partial_token_ids_[i].clear();
+
+          // Handle partial stop tokens.
+          int max_length = stop_token_detector_.MaxPartialStopTokenLength(i);
+          if (max_length > 0) {
+            pending_stop_tokens_[i].push(decoded_result.value()[i].value());
+          }
+          // We only need the latest max_length tokens for partial stop tokens.
+          // Add the extra ones to the result text and we could keep only the
+          // latest max_length stop tokens in the queue.
+          while (pending_stop_tokens_[i].size() > max_length) {
+            result_text_[i] += pending_stop_tokens_[i].front();
+            pending_stop_tokens_[i].pop();
+          }
+
+          // No partial stop token is found - add the current token to the
+          // result text directly - this is the most common case.
+          if (max_length == 0) {
+            result_text_[i] += decoded_result.value()[i].value();
+          }
         }
       }
-    }
 
-    if (sampler_.has_value()) {
-      LITERT_ASSIGN_OR_RETURN(scores_span_,
-                              ReferTensorBufferAsSpan<float>(scores_tensor_));
-    }
+      if (sampler_.has_value()) {
+        LITERT_ASSIGN_OR_RETURN(scores_span_,
+                                ReferTensorBufferAsSpan<float>(scores_tensor_));
+      }
 
-    is_first_step_ = false;
-    return stop_token_detector_.AllDone();
+      is_first_step_ = false;
+      ASSIGN_OR_RETURN(bool all_done, stop_token_detector_.AllDone());
+      if (all_done) {
+        if (step != sequence_length - 1) {
+          // we are done before all the tokens are processed, so we need to
+          // rollback the processed tokens in executor.
+          int diff = sequence_length - step;
+          ASSIGN_OR_RETURN(int current_step, executor_.GetCurrentStep());
+          RETURN_IF_ERROR(executor_.SetCurrentStep(current_step - diff));
+        }
+        return true;
+      }
+    }
+    return false;
   }
 
   absl::Span<float> GetScores() { return scores_span_; }
@@ -416,7 +445,7 @@ absl::StatusOr<Responses> Decode(
   // The number of decoded tokens for each candidate (for custom sampling).
   std::vector<int> num_decoded_tokens(num_output_candidates);
 
-  int num_decode_steps = 0;
+  ASSIGN_OR_RETURN(int executor_step_before_decode, executor.GetCurrentStep());
   const int max_num_tokens = TryGetMaxNumTokens(executor);
   DecodeOneStep run_one_step(&executor, &tokenizer, num_output_candidates,
                              stop_token_detector, benchmark_info, sampler,
@@ -424,6 +453,8 @@ absl::StatusOr<Responses> Decode(
   while (true) {
     if (cancelled != nullptr && cancelled->load()) {
       if (benchmark_info.has_value()) {
+        ASSIGN_OR_RETURN(int current_step, executor.GetCurrentStep());
+        int num_decode_steps = current_step - executor_step_before_decode;
         // If the process is cancelled, we need to end this benchmark phase.
         RETURN_IF_ERROR(benchmark_info->TimeDecodeTurnEnd(
             num_decode_steps * num_output_candidates));
@@ -456,7 +487,6 @@ absl::StatusOr<Responses> Decode(
     if (!all_done.ok()) {
       return all_done.status();
     }
-    num_decode_steps++;
     std::vector<std::string> step_texts;
     std::vector<float> step_scores;
     if (is_streaming) {
@@ -496,18 +526,21 @@ absl::StatusOr<Responses> Decode(
       }
     }
 
-    if (is_streaming && any_updates && !*all_done) {
+    if (is_streaming && any_updates) {
       callback(Responses(TaskState::kProcessing, std::move(step_texts),
                          std::move(step_scores)));
     }
 
+    ASSIGN_OR_RETURN(int current_step, executor.GetCurrentStep());
+    int num_decode_steps = current_step - executor_step_before_decode;
     if (ShouldStop(*all_done, benchmark_decode_token_count, num_decode_steps,
-                   executor.GetCurrentStep().value(), max_num_tokens,
-                   max_output_tokens)) {
+                   current_step, max_num_tokens, max_output_tokens)) {
       break;
     }
   }
 
+  int num_decode_steps =
+      executor.GetCurrentStep().value() - executor_step_before_decode;
   if (benchmark_info.has_value()) {
     RETURN_IF_ERROR(benchmark_info->TimeDecodeTurnEnd(num_decode_steps *
                                                       num_output_candidates));

@@ -31,6 +31,8 @@
 #include "runtime/conversation/model_data_processor/function_gemma_data_processor_config.h"
 #include "runtime/conversation/model_data_processor/gemma3_data_processor.h"
 #include "runtime/conversation/model_data_processor/gemma3_data_processor_config.h"
+#include "runtime/conversation/model_data_processor/gemma4_data_processor.h"
+#include "runtime/conversation/model_data_processor/gemma4_data_processor_config.h"
 #include "runtime/conversation/model_data_processor/generic_data_processor.h"
 #include "runtime/conversation/model_data_processor/generic_data_processor_config.h"
 #include "runtime/conversation/model_data_processor/model_data_processor.h"
@@ -98,6 +100,24 @@ absl::StatusOr<DataProcessorConfig> CreateGemma3DataProcessorConfig(
     if (gemma3.image_tensor_width() != default_gemma3.image_tensor_width()) {
       config.image_tensor_width = gemma3.image_tensor_width();
     }
+  } else if (model_type.has_gemma4()) {
+    proto::Gemma4 gemma4 = model_type.gemma4();
+    if (gemma4.has_start_of_image_token()) {
+      ASSIGN_OR_RETURN(config.boi_token,
+                       GetTokenString(gemma4.start_of_image_token()));
+    }
+    if (gemma4.has_end_of_image_token()) {
+      ASSIGN_OR_RETURN(config.eoi_token,
+                       GetTokenString(gemma4.end_of_image_token()));
+    }
+    if (gemma4.has_start_of_audio_token()) {
+      ASSIGN_OR_RETURN(config.boa_token,
+                       GetTokenString(gemma4.start_of_audio_token()));
+    }
+    if (gemma4.has_end_of_audio_token()) {
+      ASSIGN_OR_RETURN(config.eoa_token,
+                       GetTokenString(gemma4.end_of_audio_token()));
+    }
   } else {
     return absl::InvalidArgumentError(
         "Gemma3N or Gemma3 LlmModelType is required to create "
@@ -153,6 +173,86 @@ absl::StatusOr<DataProcessorConfig> CreateFunctionGemmaDataProcessorConfig(
             FunctionGemmaDataProcessorConfig::ConstraintMode::kTextAndOr;
         break;
     }
+  }
+  return config;
+}
+
+absl::StatusOr<DataProcessorConfig> CreateGemma4DataProcessorConfig(
+    const proto::LlmModelType& model_type) {
+  if (!model_type.has_gemma4()) {
+    return absl::InvalidArgumentError(
+        "Gemma4 LlmModelType is required to create "
+        "Gemma4DataProcessorConfig.");
+  }
+  Gemma4DataProcessorConfig config;
+  proto::Gemma4 gemma4 = model_type.gemma4();
+  if (gemma4.has_start_of_image_token()) {
+    ASSIGN_OR_RETURN(config.boi_token,
+                     GetTokenString(gemma4.start_of_image_token()));
+  }
+  if (gemma4.has_end_of_image_token()) {
+    ASSIGN_OR_RETURN(config.eoi_token,
+                     GetTokenString(gemma4.end_of_image_token()));
+  }
+  if (gemma4.has_start_of_audio_token()) {
+    ASSIGN_OR_RETURN(config.boa_token,
+                     GetTokenString(gemma4.start_of_audio_token()));
+  }
+  if (gemma4.has_end_of_audio_token()) {
+    ASSIGN_OR_RETURN(config.eoa_token,
+                     GetTokenString(gemma4.end_of_audio_token()));
+  }
+  const auto& default_gemma4 = proto::Gemma4::default_instance();
+  if (gemma4.code_fence_start() != default_gemma4.code_fence_start()) {
+    config.code_fence_start = gemma4.code_fence_start();
+  }
+  if (gemma4.code_fence_end() != default_gemma4.code_fence_end()) {
+    config.code_fence_end = gemma4.code_fence_end();
+  }
+  if (gemma4.syntax_type() != default_gemma4.syntax_type()) {
+    config.syntax_type = gemma4.syntax_type();
+  }
+  if (gemma4.escape_fence_strings() != default_gemma4.escape_fence_strings()) {
+    config.escape_fence_strings = gemma4.escape_fence_strings();
+  }
+  if (gemma4.tool_code_regex() != default_gemma4.tool_code_regex()) {
+    config.tool_code_regex = gemma4.tool_code_regex();
+  }
+  if (gemma4.open_quote() != default_gemma4.open_quote()) {
+    config.open_quote = gemma4.open_quote();
+  }
+  if (gemma4.close_quote() != default_gemma4.close_quote()) {
+    config.close_quote = gemma4.close_quote();
+  }
+  if (gemma4.function_response_start() !=
+      default_gemma4.function_response_start()) {
+    config.function_response_start = gemma4.function_response_start();
+  }
+  if (gemma4.use_template_for_fc_format() !=
+      default_gemma4.use_template_for_fc_format()) {
+    config.use_template_for_fc_format = gemma4.use_template_for_fc_format();
+  }
+  if (gemma4.constraint_mode() != default_gemma4.constraint_mode()) {
+    switch (gemma4.constraint_mode()) {
+      case proto::CONSTRAINT_MODE_FUNCTION_CALL_ONLY:
+        config.constraint_mode =
+            Gemma4DataProcessorConfig::ConstraintMode::kFunctionCallOnly;
+        break;
+      case proto::CONSTRAINT_MODE_TEXT_AND_OR:
+      default:
+        config.constraint_mode =
+            Gemma4DataProcessorConfig::ConstraintMode::kTextAndOr;
+        break;
+    }
+  }
+  if (gemma4.patch_width() != default_gemma4.patch_width()) {
+    config.patch_width = gemma4.patch_width();
+  }
+  if (gemma4.patch_height() != default_gemma4.patch_height()) {
+    config.patch_height = gemma4.patch_height();
+  }
+  if (gemma4.max_num_patches() != default_gemma4.max_num_patches()) {
+    config.max_num_patches = gemma4.max_num_patches();
   }
   return config;
 }
@@ -220,6 +320,8 @@ absl::StatusOr<DataProcessorConfig> CreateDataProcessorConfigFromLlmModelType(
     case proto::LlmModelType::kGemma3:
     case proto::LlmModelType::kGemma3N:
       return CreateGemma3DataProcessorConfig(model_type);
+    case proto::LlmModelType::kGemma4:
+      return CreateGemma4DataProcessorConfig(model_type);
     case proto::LlmModelType::kQwen3:
     case proto::LlmModelType::kQwen2P5:
       return CreateQwen3DataProcessorConfig(model_type);
@@ -254,6 +356,11 @@ absl::StatusOr<std::unique_ptr<ModelDataProcessor>> CreateModelDataProcessor(
     ABSL_LOG(INFO) << "Creating FunctionGemmaDataProcessor";
     return FunctionGemmaDataProcessor::Create(
         std::get<FunctionGemmaDataProcessorConfig>(config), preface, tokenizer,
+        stop_token_ids, enable_constrained_decoding);
+  } else if (std::holds_alternative<Gemma4DataProcessorConfig>(config)) {
+    ABSL_LOG(INFO) << "Creating Gemma4DataProcessor";
+    return Gemma4DataProcessor::Create(
+        std::get<Gemma4DataProcessorConfig>(config), preface, tokenizer,
         stop_token_ids, enable_constrained_decoding);
   } else {
     return absl::InvalidArgumentError("Unsupported data processor config type");

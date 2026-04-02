@@ -15,6 +15,25 @@
  */
 package com.google.ai.edge.litertlm
 
+import com.google.gson.JsonObject
+
+/**
+ * Definition of a channel for responses, e.g. thinking channel.
+ *
+ * @property channelName The channel name. Text from this channel will be written to
+ *   [Message.channels] with the [channelName] as the key.
+ * @property start A string that marks the start of the channel.
+ * @property end A string that marks the end of the channel.
+ */
+data class Channel(val channelName: String, val start: String, val end: String) {
+  internal fun toJson() =
+    JsonObject().apply {
+      addProperty("channel_name", channelName)
+      addProperty("start", start)
+      addProperty("end", end)
+    }
+}
+
 /**
  * Backend for the LiteRT-LM engine.
  *
@@ -38,16 +57,6 @@ sealed class Backend(val name: String) {
    *   containing the libraries.
    */
   data class NPU(val nativeLibraryDir: String = "") : Backend("NPU")
-}
-
-/**
- * Returns the directory containing the native libraries for the NPU backend. Returns an empty
- * string if not applicable.
- */
-internal fun Backend.NPU.getNativeLibraryDir(): String {
-  @OptIn(ExperimentalApi::class)
-  // Uses ExperimentalFlags.npuLibrariesDir for backward compatibility.
-  return this.nativeLibraryDir.ifEmpty { ExperimentalFlags.npuLibrariesDir }
 }
 
 /**
@@ -89,13 +98,24 @@ data class EngineConfig(
  * @property tools A list of tool objects to be used in the conversation.
  * @property samplerConfig Configuration for the sampling process. If `null`, then uses the engine's
  *   default values.
+ * @property automaticToolCalling If true, tools will be called automatically. If false, tool calls
+ *   will be returned to the user to execute.
+ * @property channels A list of channels for the conversation. Each [Channel] is a part of the
+ *   model's output that is separate from the primary response, such as a 'thinking' channel.
+ *   Channel content will be written to [Message.channels] with the [Channel.channelName] as the
+ *   key.
+ *     - If `null`, uses the default channel configuration from the `LlmMetadata`.
+ *     - If empty, channels will be disabled.
  */
-data class ConversationConfig(
+data class ConversationConfig
+@JvmOverloads
+constructor(
   val systemInstruction: Contents? = null,
   val initialMessages: List<Message> = listOf(),
   val tools: List<ToolProvider> = listOf(),
   val samplerConfig: SamplerConfig? = null,
   val automaticToolCalling: Boolean = true,
+  val channels: List<Channel>? = null,
 )
 
 /**

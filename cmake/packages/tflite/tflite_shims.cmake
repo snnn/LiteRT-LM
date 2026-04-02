@@ -18,7 +18,6 @@ include(${LITERTLM_MODULES_DIR}/generators/generate_protobuf.cmake)
 
 set(_tflite_shims_dir "${LITERTLM_PACKAGES_DIR}/tflite/shims")
 include("${_tflite_shims_dir}/build_tree_shim.cmake")
-
 include(${ABSL_PACKAGE_DIR}/absl_aggregate.cmake)
 generate_absl_aggregate()
 
@@ -91,7 +90,6 @@ if(EXISTS "${STATS_CALC_SRC}")
     message(STATUS "[LiteRTLM] Found stats_calculator at: ${STATS_CALC_SRC}")
     list(APPEND PROFILING_SRCS "${STATS_CALC_SRC}")
 else()
-    # Fallback: Just in case it moves back to core, check one more spot before failing
     set(STATS_CALC_FALLBACK 
         "${TENSORFLOW_SOURCE_DIR}/tensorflow/core/util/stats_calculator.cc")
     if(EXISTS "${STATS_CALC_FALLBACK}")

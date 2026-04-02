@@ -114,6 +114,7 @@ struct LiteRtLmSettings {
   bool cache_compiled_shaders_only = false;
   std::string constraint_regex = "";
   bool use_submodel = false;
+  bool enable_speculative_decoding = false;
 };
 
 struct LitertLmMetrics {

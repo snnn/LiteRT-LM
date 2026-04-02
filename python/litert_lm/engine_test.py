@@ -148,6 +148,14 @@ class EngineTest(LiteRtLmTestBase):
     ):
       self.assertEqual(conversation.messages, messages)
 
+  def test_create_conversation_with_extra_context(self):
+    extra_context = {"key": "value"}
+    with (
+        self._create_engine() as engine,
+        engine.create_conversation(extra_context=extra_context) as conversation,
+    ):
+      self.assertEqual(conversation.extra_context, extra_context)
+
   def test_str_input_support(self):
     with (
         self._create_engine() as engine,
@@ -183,6 +191,13 @@ class EngineTest(LiteRtLmTestBase):
         engine.create_conversation(tool_event_handler=handler) as conversation,
     ):
       self.assertEqual(conversation.tool_event_handler, handler)
+
+  def test_create_session_with_apply_prompt_template(self):
+    with self._create_engine() as engine:
+      with engine.create_session(apply_prompt_template=True) as session:
+        self.assertIsInstance(session, litert_lm.AbstractSession)
+      with engine.create_session(apply_prompt_template=False) as session:
+        self.assertIsInstance(session, litert_lm.AbstractSession)
 
   def test_session_api_run_decode(self):
     with (
@@ -228,18 +243,37 @@ class EngineTest(LiteRtLmTestBase):
       self.assertLen(scoring_responses.scores, 1)
       self.assertEmpty(scoring_responses.token_lengths)
 
-  def test_get_tokenizer_survives_engine_exit(self):
-    with self._create_engine() as engine:
-      tokenizer = engine.get_tokenizer()
-      self.assertIsInstance(tokenizer, litert_lm.AbstractTokenizer)
-      expected_bos_token_id = tokenizer.bos_token_id
-      expected_eos_token_ids = tokenizer.eos_token_ids
+  def test_session_api_run_decode_async(self):
+    with (
+        self._create_engine() as engine,
+        engine.create_session() as session,
+    ):
+      self.assertIsInstance(session, litert_lm.AbstractSession)
+      session.run_prefill(["Hello", " world!"])
+      stream = session.run_decode_async()
+      responses = list(stream)
+      self.assertNotEmpty(responses)
+      self.assertLen(responses, 6)
+      full_text = "".join(["".join(r.texts) for r in responses])
+      self.assertEqual(full_text, self._EXPECTED_RESPONSE)
 
-    token_ids = tokenizer.encode("Hello world!")
-    self.assertNotEmpty(token_ids)
-    self.assertEqual(tokenizer.bos_token_id, expected_bos_token_id)
-    self.assertEqual(tokenizer.eos_token_ids, expected_eos_token_ids)
-    self.assertIsInstance(tokenizer.decode(token_ids), str)
+  def test_session_api_cancel_process(self):
+    with (
+        self._create_engine() as engine,
+        engine.create_session() as session,
+    ):
+      self.assertIsInstance(session, litert_lm.AbstractSession)
+      session.run_prefill(["Hello world!"])
+      stream = session.run_decode_async()
+
+      responses = []
+      for response in stream:
+        responses.append(response)
+        session.cancel_process()
+
+      self.assertNotEmpty(responses)
+      # We expect fewer responses than a full decode (which is 6 chunks).
+      self.assertLess(len(responses), 6)
 
 
 class FunctionCallingTest(LiteRtLmTestBase):

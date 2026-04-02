@@ -18,7 +18,6 @@ include_guard(GLOBAL)
 include("${LITERTLM_MODULES_DIR}/utils.cmake")
 include("${LITERTLM_PACKAGES_DIR}/packages.cmake")
 
-
 list(APPEND LITERTLM_INCLUDE_PATHS
   ${OPENCL_HDR_DIR}
   ${ABSL_INCLUDE_DIR}
@@ -64,7 +63,6 @@ target_link_libraries(LITERTLM_DEPS INTERFACE
 
     litertlm_cxx_bridge
     litert_lm_deps
-    llguidance_lib
 
     LiteRTLM::litert::shim
     LiteRTLM::tflite::shim

@@ -142,3 +142,5 @@ ABSL_FLAG(std::string, constraint_regex, "",
           "Regular expression to constrain the output generation.");
 ABSL_FLAG(bool, use_submodel, false,
           "Whether the submodel should be used if available.");
+ABSL_FLAG(bool, enable_speculative_decoding, false,
+          "Whether to use speculative decoding.");

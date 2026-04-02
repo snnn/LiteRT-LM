@@ -30,13 +30,11 @@ patch_file_content("${ROOT_LIST}" "find_package(absl REQUIRED)" "find_package(ab
 
 patch_file_content("${ROOT_LIST}" "add_subdirectory(compiler_plugin)" "add_subdirectory(compiler)" FALSE)
 
-
 set(LITERTLM_BYPASS_PATHS
     "${LITERT_SRC_DIR}/third_party/tensorflow/CMakeLists.txt"
     "${LITERT_SRC_DIR}/tflite/CMakeLists.txt"
     "${LITERT_SRC_DIR}/tflite/tools/cmake/CMakeLists.txt"
 )
-
 foreach(TARGET_PATH ${LITERTLM_BYPASS_PATHS})
     get_filename_component(TARGET_DIR "${TARGET_PATH}" DIRECTORY)
     if(NOT EXISTS "${TARGET_DIR}")
@@ -95,7 +93,6 @@ foreach(C_FILE ${ALL_CMAKELISTS})
         "FetchContent_MakeAvailable\\([^\\)]+\\)"
         "# [LiteRTLM] Suppressed: Using Global Manifest"
         TRUE)
-
 endforeach()
 
 patch_file_content("${LITERT_SRC_DIR}/runtime/compiled_model.cc"
@@ -116,6 +113,40 @@ patch_file_content("${LITERT_SRC_DIR}/cc/internal/litert_runtime_builtin.cc"
     FALSE
 )
 
+file(READ "${LITERT_PACKAGE_DIR}/shims/litert_cc_options_shim.cmake" litert_cc_options_shim_CONTENT)
+patch_file_content("${LITERT_SRC_DIR}/cc/options/CMakeLists.txt"
+    "cmake_minimum_required\\(VERSION 3.20\\).*"
+    ${litert_cc_options_shim_CONTENT}
+    TRUE
+)
+
+set(GPU_INJECTION_STR
+"\${TFLITE_SOURCE_DIR}/delegates/gpu/cl/gl_interop.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/common/convert.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/common/data_type.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/common/gpu_info.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/common/memory_management.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/common/memory_management/greedy_by_breadth_assignment.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/common/memory_management/greedy_by_size_assignment.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/common/memory_management/internal.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/common/memory_management/min_cost_flow_assignment.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/common/memory_management/types.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/common/operations.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/common/shape.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/cl/cl_command_queue.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/cl/cl_event.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/cl/cl_memory.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/cl/opencl_wrapper.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/cl/util.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/api.cc
+    \${TFLITE_SOURCE_DIR}/delegates/gpu/cl/cl_kernel.cc)"
+)
+patch_file_content("${LITERT_SRC_DIR}/c/CMakeLists.txt"
+    "\${TFLITE_SOURCE_DIR}/delegates/gpu/cl/gl_interop.cc)"
+    "${GPU_INJECTION_STR}"
+    FALSE
+)
+
 # --- Decouple Vendor Dependencies
 set(V_LIST "${LITERT_SRC_DIR}/vendors/CMakeLists.txt")
 if(EXISTS "${V_LIST}")
@@ -126,13 +157,13 @@ if(EXISTS "${V_LIST}")
         string(FIND "${V_CONTENT}" "add_custom_target(mediatek_schema_gen" ANCHOR_POS)
 
         if(NOT ANCHOR_POS EQUAL -1)
-            message(STATUS "[LITERTLM] Decoupling Vendor Dependencies...")
+            message(STATUS "[LiteRTLM] Decoupling Vendor Dependencies...")
             string(SUBSTRING "${V_CONTENT}" ${ANCHOR_POS} -1 POST_ANCHOR)
             string(FIND "${POST_ANCHOR}" "endif()" ENDIF_REL_POS)
             math(EXPR END_POS "${ANCHOR_POS} + ${ENDIF_REL_POS} + 7")
             string(SUBSTRING "${V_CONTENT}" 0 ${START_POS} PRE_BLOCK)
             string(SUBSTRING "${V_CONTENT}" ${END_POS} -1 POST_BLOCK)
-            set(INJECTION "\n# [LITERTLM] MediaTek Logic Virtualized\ninclude(\"${VENDOR_SHIM_PATH}\")\n")
+            set(INJECTION "\n# [LiteRTLM] MediaTek Logic Virtualized\ninclude(\"${VENDOR_SHIM_PATH}\")\n")
             file(WRITE "${V_LIST}" "${PRE_BLOCK}${INJECTION}${POST_BLOCK}")
         endif()
     endif()

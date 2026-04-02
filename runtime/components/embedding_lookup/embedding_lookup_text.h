@@ -32,6 +32,7 @@
 #include "litert/cc/litert_compiled_model.h"  // from @litert
 #include "litert/cc/litert_environment.h"  // from @litert
 #include "litert/cc/litert_model.h"  // from @litert
+#include "litert/cc/litert_options.h"  // from @litert
 #include "litert/cc/litert_ranked_tensor_type.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer.h"  // from @litert
 #include "runtime/components/embedding_lookup/embedding_lookup.h"
@@ -55,7 +56,8 @@ class EmbeddingLookupText : public EmbeddingLookup {
   // signature_key is not provided, the first signature will be used by default.
   static absl::StatusOr<std::unique_ptr<EmbeddingLookupText>> Create(
       const litert::Model* absl_nonnull model,
-      std::optional<std::string> signature_key = std::nullopt);
+      std::optional<std::string> signature_key = std::nullopt,
+      litert::Environment* absl_nullable env = nullptr);
 
   // For a given token, looks up the embedding and stores it in the
   // provided vector. The caller is responsible for ensuring that the vector is
@@ -114,10 +116,10 @@ class EmbeddingLookupText : public EmbeddingLookup {
   }
 
  protected:
-  EmbeddingLookupText(litert::Environment env,
+  EmbeddingLookupText(litert::Environment& env,
                       const litert::Model* absl_nonnull model,
                       std::optional<std::string> signature_key)
-      : env_(std::move(env)), model_(*model), signature_key_(signature_key) {}
+      : env_(env), model_(*model), signature_key_(signature_key) {}
 
   // Loads the provided model. This must be called before Lookup.
   absl::Status Initialize();
@@ -127,7 +129,7 @@ class EmbeddingLookupText : public EmbeddingLookup {
   absl::Status LookupInternal(int token, absl::Span<uint8_t> buffer);
 
   // The environment for the embedding lookup.
-  litert::Environment env_;
+  litert::Environment& env_;
   // The model for the embedding lookup. The actual model instance is owned by
   // the model resources.
   const litert::Model& model_;

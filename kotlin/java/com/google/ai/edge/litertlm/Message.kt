@@ -37,6 +37,7 @@ internal constructor(
   val role: Role,
   val contents: Contents = Contents.empty(),
   val toolCalls: List<ToolCall> = emptyList(),
+  val channels: Map<String, String> = emptyMap(),
 ) {
 
   /** Convert to [JsonObject]. Used internally. */
@@ -52,6 +53,13 @@ internal constructor(
           toolCallsJson.add(toolCall.toJson())
         }
         add("tool_calls", toolCallsJson)
+      }
+      if (channels.isNotEmpty()) {
+        val channelsJson = JsonObject()
+        for ((key, value) in channels) {
+          channelsJson.addProperty(key, value)
+        }
+        add("channels", channelsJson)
       }
     }
 
@@ -75,9 +83,12 @@ internal constructor(
     /** Creates a model [Message] from the given text. */
     fun model(text: String) = model(Contents.of(text))
 
-    /** Creates a model [Message] from the given contents and tool calls. */
-    fun model(contents: Contents = Contents.empty(), toolCalls: List<ToolCall> = emptyList()) =
-      Message(Role.MODEL, contents, toolCalls)
+    /** Creates a model [Message] from the given contents, tool calls, and channels. */
+    fun model(
+      contents: Contents = Contents.empty(),
+      toolCalls: List<ToolCall> = emptyList(),
+      channels: Map<String, String> = emptyMap(),
+    ) = Message(Role.MODEL, contents, toolCalls, channels)
 
     /** Creates a tool [Message] from the given contents. */
     fun tool(contents: Contents) = Message(Role.TOOL, contents)

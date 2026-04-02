@@ -2,19 +2,31 @@ name: "Nightly-Mac-Arm64"
 
 on:
   workflow_dispatch:
+    inputs:
+      is_nightly:
+        description: 'Whether to build the nightly package (sets DEV_BUILD=1)'
+        required: true
+        default: true
+        type: boolean
+      publish_to_pypi:
+        description: 'Publish to PyPI'
+        required: true
+        default: false
+        type: boolean
   schedule:
-    # Runs at 9:00 UTC. It is
-    # - 1:00 AM Pacific Standard Time, UTC-8, or
-    # - 2:00 AM Pacific Daylight Time, UTC-7.
-    - cron: "0 9 * * *"
+    - cron: '0 21 * * *'
+      timezone: 'America/Los_Angeles'
 
 jobs:
   build-mac-wheel:
     name: "Build Python Wheel ${{ matrix.python-version }}"
     runs-on: macos-latest
+    env:
+      DEV_BUILD: ${{ (github.event_name == 'schedule' || github.event.inputs.is_nightly == 'true') && '1' || '0' }}
+      PUBLISH_TO_PYPI: ${{ (github.event_name == 'schedule' || github.event.inputs.publish_to_pypi == 'true') && 'true' || 'false' }}
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - name: Checkout code.
         uses: actions/checkout@v4
@@ -24,13 +36,13 @@ jobs:
       - name: Build Python Wheel
         run: |
           PYTHON_VERSION=${{ matrix.python-version }}
-          DATE=$(date +'%Y%m%d')
+          DATE=$(TZ=America/Los_Angeles date +'%Y%m%d')
           bazel build --config=macos_arm64 \
             --repo_env=HERMETIC_PYTHON_VERSION=${PYTHON_VERSION} \
             --@rules_python//python/config_settings:python_version=${PYTHON_VERSION} \
-            --define=PYPI_NIGHTLY=1 \
-            --define=PYPI_NIGHTLY_DATE=${DATE} \
-            -c opt //python/litert_lm:litert_lm_wheel
+            --define=DEV_BUILD=${{ env.DEV_BUILD }} \
+            --define=DEV_VERSION=${DATE} \
+            -c opt //python/litert_lm:wheel
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -48,6 +60,7 @@ jobs:
           uv run python python/litert_lm/examples/simple_main.py
 
       - name: Publish to PyPI
+        if: env.PUBLISH_TO_PYPI == 'true'
         env:
           UV_PUBLISH_TOKEN: ${{ secrets.PYPI_UPLOAD_TOKEN }}
         run: |

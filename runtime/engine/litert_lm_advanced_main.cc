@@ -30,13 +30,10 @@
 #include <string>
 #include <vector>
 
-#include "absl/base/log_severity.h"  // from @com_google_absl
 #include "absl/flags/flag.h"  // from @com_google_absl
-#include "absl/flags/marshalling.h"  // from @com_google_absl
 #include "absl/flags/parse.h"  // from @com_google_absl
 #include "absl/log/absl_check.h"  // from @com_google_absl
 #include "absl/log/absl_log.h"  // from @com_google_absl
-#include "absl/log/globals.h"  // from @com_google_absl
 #include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/statusor.h"  // from @com_google_absl
 #include "absl/strings/numbers.h"  // from @com_google_absl
@@ -177,7 +174,8 @@ absl::Status MainHelper(int argc, char** argv) {
            "[--sampler_handles_input=<true|false>]"
            "[--disable_cache=<true|false>]"
            "[--cache_compiled_shader_only=<true|false>]"
-           "[--conv_type=<auto|float|int8>]";
+           "[--conv_type=<auto|float|int8>]"
+           "[--enable_speculative_decoding=<true|false>]";
     ABSL_LOG(INFO)
         << "To provide data for multimodality, use [image:/path/to/image.jpg] "
            "or [audio:/path/to/audio.wav] in the input prompt. e.g. \"Describe "
@@ -248,11 +246,13 @@ absl::Status MainHelper(int argc, char** argv) {
       absl::GetFlag(FLAGS_litert_dispatch_lib_dir);
   settings.sampler_handles_input = absl::GetFlag(FLAGS_sampler_handles_input);
   settings.conv_type =
-      absl::GetFlag(FLAGS_conv_type) == "float" ? litert::lm::ConvType::kFloat :
-      absl::GetFlag(FLAGS_conv_type) == "int8" ? litert::lm::ConvType::kInt8 :
-      litert::lm::ConvType::kAuto;
+      absl::GetFlag(FLAGS_conv_type) == "float"  ? litert::lm::ConvType::kFloat
+      : absl::GetFlag(FLAGS_conv_type) == "int8" ? litert::lm::ConvType::kInt8
+                                                 : litert::lm::ConvType::kAuto;
   settings.constraint_regex = absl::GetFlag(FLAGS_constraint_regex);
   settings.use_submodel = absl::GetFlag(FLAGS_use_submodel);
+  settings.enable_speculative_decoding =
+      absl::GetFlag(FLAGS_enable_speculative_decoding);
 
   // Adjust max_num_tokens and prefill_batch_size if not set on benchmark mode.
   if (settings.benchmark && settings.benchmark_prefill_tokens > 0) {

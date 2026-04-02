@@ -13,11 +13,11 @@
 # limitations under the License.
 
 
-# TODO(totero): Refactor this to file to be a generator script.
 
 set(PKG_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
-# set(ANTLR_TOOL_JAR "${PROJECT_ROOT}/antlr-4.13.2-complete.jar")
 
+# TODO(totero): Refactor anltr generation step into generators.cmake file.
+# --- ANTLR GENERATION ---
 set(ANTLR_GENERATED_DIR ${CMAKE_CURRENT_BINARY_DIR}/antlr_generated)
 file(MAKE_DIRECTORY ${ANTLR_GENERATED_DIR})
 
@@ -92,7 +92,6 @@ target_link_libraries(antlr_python_tool_call_parser
     PUBLIC
         antlr4_static
 )
-
 
 add_custom_command(
     OUTPUT

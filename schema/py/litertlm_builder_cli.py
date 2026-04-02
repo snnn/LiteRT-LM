@@ -76,6 +76,7 @@ bazel run //schema/py:litertlm_builder_cli -- \
 """
 
 import argparse
+import os
 import sys
 from typing import BinaryIO, cast
 
@@ -470,6 +471,9 @@ def _build_litertlm_file(parsed_args: list[argparse.Namespace]) -> None:
           )
     assert output_path, "Output path is required."
     assert toml_path, "TOML path is required."
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+      os.makedirs(output_dir, exist_ok=True)
     with litertlm_core.open_file(output_path, "wb") as f:
       builder = litertlm_builder.LitertLmFileBuilder.from_toml_file(toml_path)
       builder.build(f)
@@ -496,6 +500,9 @@ def _build_litertlm_file(parsed_args: list[argparse.Namespace]) -> None:
           raise ValueError(f"Unknown subcommand: {parsed_arg.command}")
 
     assert output_path, "Output path is required."
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+      os.makedirs(output_dir, exist_ok=True)
     with litertlm_core.open_file(output_path, "wb") as f:
       builder.build(cast(BinaryIO, f))
 

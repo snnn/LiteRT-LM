@@ -56,12 +56,14 @@ class EmbeddingLookupManager {
       absl::flat_hash_map<int, const litert::Model*>&
           end_of_multi_modal_embedding_models,
       bool fully_supports_multi_modal = true,
-      std::optional<std::string> signature_key = std::nullopt);
+      std::optional<std::string> signature_key = std::nullopt,
+      litert::Environment* env = nullptr);
 
   static absl::StatusOr<std::unique_ptr<EmbeddingLookupManager>> Create(
       const litert::Model* absl_nonnull text_embedding_model,
       bool fully_supports_multi_modal = true,
-      std::optional<std::string> signature_key = std::nullopt);
+      std::optional<std::string> signature_key = std::nullopt,
+      litert::Environment* env = nullptr);
 
   // Updates the multimodal embeddings for the given ExecutorInputs.
   // Intended to be called at the beginning of the prefill pass.
@@ -118,8 +120,8 @@ class EmbeddingLookupManager {
       const litert::Model* absl_nonnull text_embedding_model,
       absl::flat_hash_map<int, const litert::Model*>&
           end_of_multi_modal_embedding_models,
-      bool fully_supports_multi_modal,
-      std::optional<std::string> signature_key);
+      bool fully_supports_multi_modal, std::optional<std::string> signature_key,
+      litert::Environment* env = nullptr);
 
   std::unique_ptr<EmbeddingLookupText> text_embedding_lookup_;
   std::vector<std::unique_ptr<EmbeddingLookupMultiModal>>

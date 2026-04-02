@@ -111,6 +111,9 @@ class ModelAssets {
   static absl::StatusOr<ModelAssets> Create(absl::string_view model_path);
   static absl::StatusOr<ModelAssets> Create(
       std::shared_ptr<MemoryMappedFile> model_file);
+  static absl::StatusOr<ModelAssets> Create(
+      std::shared_ptr<MemoryMappedFile> model_file,
+      absl::string_view model_path);
 
   // Convenience factory function to create a ModelAssets with both a model
   // path and file. Will use the scoped file if both are provided.
@@ -141,6 +144,8 @@ class ModelAssets {
                        absl::string_view model_path);
   explicit ModelAssets(absl::string_view model_path);
   explicit ModelAssets(std::shared_ptr<MemoryMappedFile> model_file);
+  explicit ModelAssets(std::shared_ptr<MemoryMappedFile> model_file,
+                       absl::string_view model_path);
 
   // TODO: b/417814685 - Consider supporting multiple model files if the need
   // case arises.

@@ -1,6 +1,0 @@
-# This is the primary configuration file for the build system uses the build
-# frontend (like pip) first reads this file to understand.
-# what build backend to use and what dependencies are needed to build the package.
-[build-system]
-requires = ["setuptools>=40.8.0", "wheel", "grpcio-tools"]
-build-backend = "setuptools.build_meta"
