@@ -62,6 +62,20 @@ class ToolEventHandler(abc.ABC):
     """
 
 
+@dataclasses.dataclass
+class SessionOptions:
+  """Options applied when a new low-level session is created."""
+
+  apply_prompt_template_in_session: bool | None = None
+
+
+@dataclasses.dataclass
+class DecodeOptions:
+  """Options applied to a single decode request."""
+
+  max_output_tokens: int | None = None
+
+
 @dataclasses.dataclass(kw_only=True)
 class AbstractEngine(abc.ABC):
   """Abstract base class for LiteRT-LM engines.
@@ -120,13 +134,12 @@ class AbstractEngine(abc.ABC):
 
   @abc.abstractmethod
   def create_session(
-      self, *, apply_prompt_template: bool = True
+      self, options: SessionOptions | None = None
   ) -> AbstractSession:
     """Creates a new session for this engine.
 
     Args:
-        apply_prompt_template: Whether to apply the basic prompt templates in
-          the session.
+        options: Session options to apply when creating the low-level session.
 
     Returns:
         A new session instance for low-level interaction with the model.
@@ -281,11 +294,13 @@ class Responses:
         length is equal to length of the "target_text" in "run_text_scoring".
         This field is only used in `run_text_scoring` when `store_token_lengths`
         is True.
+      greedy_token_ids: The greedy token ids seen during scoring.
   """
 
   texts: list[str] = dataclasses.field(default_factory=list)
   scores: list[float] = dataclasses.field(default_factory=list)
   token_lengths: list[int] = dataclasses.field(default_factory=list)
+  greedy_token_ids: list[list[int]] = dataclasses.field(default_factory=list)
 
 
 # TODO(b/482060476): Add clone() API once switching to advanced engine.
@@ -316,7 +331,7 @@ class AbstractSession(abc.ABC):
     """
 
   @abc.abstractmethod
-  def run_decode(self) -> Responses:
+  def run_decode(self, options: DecodeOptions | None = None) -> Responses:
     """Runs the decode stage of the session.
 
     Returns:
