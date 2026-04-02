@@ -18,7 +18,6 @@ from .interfaces import AbstractBenchmark
 from .interfaces import AbstractConversation
 from .interfaces import AbstractEngine
 from .interfaces import AbstractSession
-from .interfaces import AbstractTokenizer
 from .interfaces import Backend
 from .interfaces import BenchmarkInfo
 from .interfaces import DecodeOptions
@@ -48,14 +47,12 @@ AbstractConversation.register(Conversation)
 AbstractBenchmark.register(_Benchmark)
 BenchmarkInfo.register(_BenchmarkInfo)
 AbstractSession.register(Session)
-AbstractTokenizer.register(Tokenizer)
 
 __all__ = (
     "AbstractBenchmark",
     "AbstractConversation",
     "AbstractEngine",
     "AbstractSession",
-    "AbstractTokenizer",
     "Backend",
     "Benchmark",
     "BenchmarkInfo",

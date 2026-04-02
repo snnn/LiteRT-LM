@@ -185,15 +185,6 @@ SessionConfig ParseSessionOptions(const nb::handle& options) {
     session_config.SetApplyPromptTemplateInSession(
         *apply_prompt_template_in_session);
   }
-  auto max_output_tokens = GetOptionalAttr<int>(options_obj, "max_output_tokens");
-  if (max_output_tokens.has_value()) {
-    session_config.SetMaxOutputTokens(*max_output_tokens);
-  }
-  auto num_output_candidates =
-      GetOptionalAttr<int>(options_obj, "num_output_candidates");
-  if (num_output_candidates.has_value()) {
-    session_config.SetNumOutputCandidates(*num_output_candidates);
-  }
   return session_config;
 }
 
@@ -220,16 +211,9 @@ nb::object ToPyResponses(const Responses& responses) {
                                             : responses.GetTexts();
   auto scores = responses.GetScores();
   auto token_lengths = responses.GetTokenLengths().value_or(std::vector<int>());
-  auto token_scores =
-      responses.GetTokenScores().value_or(std::vector<std::vector<float>>());
-  auto token_ids =
-      responses.GetTokenIds().value_or(std::vector<std::vector<int>>());
   auto greedy_token_ids =
       responses.GetGreedyTokenIds().value_or(std::vector<std::vector<int>>());
-  auto finish_reasons =
-      responses.GetFinishReasons().value_or(std::vector<std::string>());
-  return py_responses_class(texts, scores, token_lengths, token_scores,
-                            token_ids, greedy_token_ids, finish_reasons);
+  return py_responses_class(texts, scores, token_lengths, greedy_token_ids);
 }
 
 // Note: Consider move to C++ API.
@@ -714,18 +698,7 @@ NB_MODULE(litert_lm_ext, module) {
                 self.RunTextScoring(target_text_views, store_token_lengths)));
           },
           nb::arg("target_text"), nb::arg("store_token_lengths") = false,
-          "Scores the target text after the prefill process is done.")
-      .def(
-          "run_token_scoring",
-          [](Engine::Session& self,
-             const std::vector<std::vector<int>>& target_token_ids,
-             bool store_token_lengths) {
-            return ToPyResponses(VALUE_OR_THROW(
-                self.RunTokenIdScoring(target_token_ids, store_token_lengths)));
-          },
-          nb::arg("target_token_ids"),
-          nb::arg("store_token_lengths") = false,
-          "Scores the target token ids after the prefill process is done.");
+          "Scores the target text after the prefill process is done.");
 
   nb::class_<Conversation>(module, "Conversation", nb::dynamic_attr())
       // Support for Python context managers (with statement).
@@ -822,32 +795,12 @@ NB_MODULE(litert_lm_ext, module) {
             };
             auto state = std::make_shared<AsyncState>();
 
-            struct PythonCallbackState {
-              explicit PythonCallbackState(nb::object self_obj,
-                                           nb::dict tool_map_obj,
-                                           nb::object tool_event_handler_obj)
-                  : self(std::move(self_obj)),
-                    tool_map(std::move(tool_map_obj)),
-                    tool_event_handler(std::move(tool_event_handler_obj)) {}
-
-              ~PythonCallbackState() {
-                nb::gil_scoped_acquire acquire;
-                self = nb::object();
-                tool_map = nb::dict();
-                tool_event_handler = nb::object();
-              }
-
+            struct Callback {
               nb::object self;
+              std::shared_ptr<MessageIterator> iterator;
               nb::dict tool_map;
               nb::object tool_event_handler;
-            };
-            auto python_state = std::make_shared<PythonCallbackState>(
-                self, tool_map, tool_event_handler);
-
-            struct Callback {
-              std::shared_ptr<MessageIterator> iterator;
               std::shared_ptr<AsyncState> state;
-              std::shared_ptr<PythonCallbackState> python_state;
 
               void operator()(absl::StatusOr<Message> message) const {
                 if (!message.ok()) {
@@ -866,9 +819,8 @@ NB_MODULE(litert_lm_ext, module) {
                 if (json_msg.contains("tool_calls") &&
                     !json_msg["tool_calls"].empty()) {
                   nb::gil_scoped_acquire acquire;
-                  state->pending_tool_response = HandleToolCalls(
-                      json_msg, python_state->tool_map,
-                      python_state->tool_event_handler);
+                  state->pending_tool_response =
+                      HandleToolCalls(json_msg, tool_map, tool_event_handler);
                 }
 
                 if (json_msg.contains("content")) {
@@ -887,8 +839,7 @@ NB_MODULE(litert_lm_ext, module) {
                     state->pending_tool_response = nullptr;
 
                     nb::gil_scoped_acquire acquire;
-                    Conversation& conv =
-                        nb::cast<Conversation&>(python_state->self);
+                    Conversation& conv = nb::cast<Conversation&>(self);
                     absl::Status status =
                         conv.SendMessageAsync(next_message, *this);
                     if (!status.ok()) {
@@ -902,7 +853,8 @@ NB_MODULE(litert_lm_ext, module) {
             };
 
             absl::Status status = conversation.SendMessageAsync(
-                json_message, Callback{iterator, state, python_state});
+                json_message,
+                Callback{self, iterator, tool_map, tool_event_handler, state});
 
             if (!status.ok()) {
               std::stringstream error_msg_stream;
