@@ -77,6 +77,8 @@ class AbstractEngine(abc.ABC):
         None, use the model's default. If True, enable speculative decoding; an
         error will be thrown if the model does not support it. If False, disable
         it.
+      bos_token_id: The BOS token id for the model if one is configured.
+      eos_token_ids: Stop token sequences configured for the model.
   """
 
   model_path: str
@@ -131,6 +133,24 @@ class AbstractEngine(abc.ABC):
     Returns:
         A new session instance for low-level interaction with the model.
     """
+
+  @property
+  @abc.abstractmethod
+  def bos_token_id(self) -> int | None:
+    """Returns the configured BOS token id for the model, if any."""
+
+  @property
+  @abc.abstractmethod
+  def eos_token_ids(self) -> list[list[int]]:
+    """Returns the configured EOS/stop token sequences for the model."""
+
+  @abc.abstractmethod
+  def tokenize(self, text: str) -> list[int]:
+    """Tokenizes text using the engine's tokenizer."""
+
+  @abc.abstractmethod
+  def detokenize(self, token_ids: list[int]) -> str:
+    """Decodes token ids using the engine's tokenizer."""
 
 
 class AbstractConversation(abc.ABC):
@@ -281,11 +301,13 @@ class Responses:
         length is equal to length of the "target_text" in "run_text_scoring".
         This field is only used in `run_text_scoring` when `store_token_lengths`
         is True.
+      token_scores: Per-token scores produced during scoring.
   """
 
   texts: list[str] = dataclasses.field(default_factory=list)
   scores: list[float] = dataclasses.field(default_factory=list)
   token_lengths: list[int] = dataclasses.field(default_factory=list)
+  token_scores: list[list[float]] = dataclasses.field(default_factory=list)
 
 
 # TODO(b/482060476): Add clone() API once switching to advanced engine.
@@ -314,6 +336,10 @@ class AbstractSession(abc.ABC):
           the user can break down their prompt/query into multiple chunks and
           call this function multiple times.
     """
+
+  @abc.abstractmethod
+  def run_prefill_token_ids(self, token_ids: list[int]) -> None:
+    """Runs the prefill stage using already-tokenized ids."""
 
   @abc.abstractmethod
   def run_decode(self) -> Responses:
@@ -348,6 +374,12 @@ class AbstractSession(abc.ABC):
         Responses: The log likelihood scores of the target text given the
         existing session state.
     """
+
+  @abc.abstractmethod
+  def run_token_scoring(
+      self, target_token_ids: list[list[int]], store_token_lengths: bool = False
+  ) -> Responses:
+    """Scores tokenized targets against the existing session state."""
 
   @abc.abstractmethod
   def cancel_process(self) -> None:

@@ -175,6 +175,43 @@ void SetBackendAttr(nb::object& py_engine, const nb::handle& backend_handle) {
   }
 }
 
+std::vector<int> Tokenize(Engine& engine, std::string_view text) {
+  Tokenizer& tokenizer = const_cast<Tokenizer&>(engine.GetTokenizer());
+  return VALUE_OR_THROW(tokenizer.TextToTokenIds(text));
+}
+
+std::string Detokenize(Engine& engine, const std::vector<int>& token_ids) {
+  Tokenizer& tokenizer = const_cast<Tokenizer&>(engine.GetTokenizer());
+  return VALUE_OR_THROW(tokenizer.TokenIdsToText(token_ids));
+}
+
+std::optional<int> GetBosTokenId(const Engine& engine) {
+  const auto& metadata = engine.GetEngineSettings().GetLlmMetadata();
+  if (!metadata.has_value() || !metadata->has_start_token() ||
+      !metadata->start_token().has_token_ids() ||
+      metadata->start_token().token_ids().ids_size() == 0) {
+    return std::nullopt;
+  }
+  return metadata->start_token().token_ids().ids(0);
+}
+
+std::vector<std::vector<int>> GetEosTokenIds(const Engine& engine) {
+  std::vector<std::vector<int>> stop_token_ids;
+  const auto& metadata = engine.GetEngineSettings().GetLlmMetadata();
+  if (!metadata.has_value()) {
+    return stop_token_ids;
+  }
+  stop_token_ids.reserve(metadata->stop_tokens_size());
+  for (const auto& stop_token : metadata->stop_tokens()) {
+    if (!stop_token.has_token_ids()) {
+      continue;
+    }
+    stop_token_ids.emplace_back(stop_token.token_ids().ids().begin(),
+                                stop_token.token_ids().ids().end());
+  }
+  return stop_token_ids;
+}
+
 // Helper to convert C++ Responses to Python Responses dataclass.
 nb::object ToPyResponses(const Responses& responses) {
   nb::object py_responses_class =
@@ -185,7 +222,9 @@ nb::object ToPyResponses(const Responses& responses) {
                                             : responses.GetTexts();
   auto scores = responses.GetScores();
   auto token_lengths = responses.GetTokenLengths().value_or(std::vector<int>());
-  return py_responses_class(texts, scores, token_lengths);
+  auto token_scores =
+      responses.GetTokenScores().value_or(std::vector<std::vector<float>>());
+  return py_responses_class(texts, scores, token_lengths, token_scores);
 }
 
 // Note: Consider move to C++ API.
@@ -655,7 +694,15 @@ NB_MODULE(litert_lm_ext, module) {
             return VALUE_OR_THROW(self.CreateSession(session_config));
           },
           nb::kw_only(), nb::arg("apply_prompt_template") = true,
-          "Creates a new session for this engine.");
+          "Creates a new session for this engine.")
+      .def("tokenize", &Tokenize, nb::arg("text"),
+           "Tokenizes text using the engine's tokenizer.")
+      .def("detokenize", &Detokenize, nb::arg("token_ids"),
+           "Decodes token ids using the engine's tokenizer.")
+      .def_prop_ro("bos_token_id", &GetBosTokenId,
+                   "Returns the configured BOS token id, if any.")
+      .def_prop_ro("eos_token_ids", &GetEosTokenIds,
+                   "Returns the configured EOS/stop token sequences.");
 
   nb::class_<Engine::Session>(module, "Session", nb::dynamic_attr(),
                               "Session is responsible for hosting the "
@@ -687,6 +734,17 @@ NB_MODULE(litert_lm_ext, module) {
           "prefilling process. Note that the user can break down their "
           "prompt/query into multiple chunks and call this function multiple "
           "times.")
+      .def(
+          "run_prefill_token_ids",
+          [](Engine::Session& self, const std::vector<int>& token_ids) {
+            auto token_id_buffer =
+                VALUE_OR_THROW(Tokenizer::TokenIdsToTensorBuffer(token_ids));
+            std::vector<InputData> input_data;
+            input_data.emplace_back(InputText(std::move(token_id_buffer)));
+            STATUS_OR_THROW(self.RunPrefill(input_data));
+          },
+          nb::arg("token_ids"),
+          "Adds already-tokenized input ids to the session prefill state.")
       .def(
           "run_decode",
           [](Engine::Session& self) {
@@ -723,6 +781,17 @@ NB_MODULE(litert_lm_ext, module) {
           },
           nb::arg("target_text"), nb::arg("store_token_lengths") = false,
           "Scores the target text after the prefill process is done.")
+      .def(
+          "run_token_scoring",
+          [](Engine::Session& self,
+             const std::vector<std::vector<int>>& target_token_ids,
+             bool store_token_lengths) {
+            return ToPyResponses(VALUE_OR_THROW(
+                self.RunTokenIdScoring(target_token_ids, store_token_lengths)));
+          },
+          nb::arg("target_token_ids"),
+          nb::arg("store_token_lengths") = false,
+          "Scores tokenized targets after the prefill process is done.")
       .def("cancel_process", &Engine::Session::CancelProcess,
            "Cancels the ongoing inference process.");
 

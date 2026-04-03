@@ -166,6 +166,24 @@ class Engine {
       return absl::UnimplementedError("Not implemented.");
     }
 
+    // Scores target token ids after the prefill process is done. This is the
+    // token-id equivalent of RunTextScoring and is useful when callers already
+    // control tokenization externally.
+    virtual absl::StatusOr<Responses> RunTokenIdScoring(
+        const std::vector<TokenIds>& target_token_ids,
+        bool store_token_lengths) {
+      return absl::UnimplementedError("Not implemented.");
+    }
+
+    // Asynchronous variant of RunTokenIdScoring.
+    virtual absl::StatusOr<std::unique_ptr<TaskController>>
+    RunTokenIdScoringAsync(
+        const std::vector<TokenIds>& target_token_ids,
+        absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback,
+        bool store_token_lengths) {
+      return absl::UnimplementedError("Not implemented.");
+    }
+
     // Adds the input prompt/query to the model for starting the prefilling
     // process. Note that the user can break down their prompt/query into
     // multiple chunks and call this function multiple times.

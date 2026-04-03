@@ -133,6 +133,30 @@ class EngineTest(LiteRtLmTestBase):
     with self._create_engine() as engine:
       self.assertIsInstance(engine, litert_lm.AbstractEngine)
 
+  def test_engine_tokenization_api(self):
+    with self._create_engine() as engine:
+      token_ids = engine.tokenize("Hello world!")
+      self.assertNotEmpty(token_ids)
+      self.assertTrue(all(isinstance(token_id, int) for token_id in token_ids))
+
+      decoded = engine.detokenize(token_ids)
+      self.assertIsInstance(decoded, str)
+      self.assertNotEmpty(decoded)
+
+  def test_engine_special_token_metadata(self):
+    with self._create_engine() as engine:
+      bos_token_id = engine.bos_token_id
+      if bos_token_id is not None:
+        self.assertIsInstance(bos_token_id, int)
+
+      eos_token_ids = engine.eos_token_ids
+      self.assertIsInstance(eos_token_ids, list)
+      for stop_token_ids in eos_token_ids:
+        self.assertIsInstance(stop_token_ids, list)
+        self.assertTrue(
+            all(isinstance(token_id, int) for token_id in stop_token_ids)
+        )
+
   def test_conversation_abc_inheritance(self):
     with (
         self._create_engine() as engine,
@@ -242,6 +266,33 @@ class EngineTest(LiteRtLmTestBase):
       self.assertEmpty(scoring_responses.texts)
       self.assertLen(scoring_responses.scores, 1)
       self.assertEmpty(scoring_responses.token_lengths)
+      self.assertLen(scoring_responses.token_scores, 1)
+
+  def test_session_api_run_prefill_token_ids(self):
+    with (
+        self._create_engine() as engine,
+        engine.create_session() as session,
+    ):
+      session.run_prefill_token_ids(engine.tokenize("Hello world!"))
+      responses = session.run_decode()
+      self.assertIsInstance(responses, litert_lm.Responses)
+      self.assertEqual(responses.texts, [self._EXPECTED_RESPONSE])
+
+  def test_session_api_run_token_scoring(self):
+    with (
+        self._create_engine() as engine,
+        engine.create_session() as session,
+    ):
+      session.run_prefill_token_ids(engine.tokenize("Hello world!"))
+      scoring_responses = session.run_token_scoring(
+          [engine.tokenize("Hello")], store_token_lengths=True
+      )
+      self.assertIsInstance(scoring_responses, litert_lm.Responses)
+      self.assertEmpty(scoring_responses.texts)
+      self.assertLen(scoring_responses.scores, 1)
+      self.assertLen(scoring_responses.token_lengths, 1)
+      self.assertLen(scoring_responses.token_scores, 1)
+      self.assertNotEmpty(scoring_responses.token_scores[0])
 
   def test_session_api_run_decode_async(self):
     with (

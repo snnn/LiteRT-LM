@@ -101,6 +101,16 @@ class SessionBasic : public Engine::Session {
       absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback,
       bool store_token_lengths) override;
 
+  absl::StatusOr<Responses> RunTokenIdScoring(
+      const std::vector<TokenIds>& target_token_ids,
+      bool store_token_lengths) override;
+
+  absl::StatusOr<std::unique_ptr<Engine::Session::TaskController>>
+  RunTokenIdScoringAsync(
+      const std::vector<TokenIds>& target_token_ids,
+      absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback,
+      bool store_token_lengths) override;
+
   absl::Status RunPrefill(const std::vector<InputData>& contents) override;
 
   absl::StatusOr<std::unique_ptr<Engine::Session::TaskController>>

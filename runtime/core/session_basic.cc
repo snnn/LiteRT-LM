@@ -44,6 +44,7 @@
 #include "runtime/components/tokenizer.h"
 #include "runtime/core/pipeline.h"
 #include "runtime/core/session_utils.h"
+#include "runtime/core/tasks.h"
 #include "runtime/engine/engine.h"
 #include "runtime/engine/engine_settings.h"
 #include "runtime/engine/io_types.h"
@@ -543,10 +544,6 @@ SessionBasic::RunTextScoringAsync(
     const std::vector<absl::string_view>& target_text,
     absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback,
     bool store_token_lengths) {
-  if (target_text.size() != 1) {
-    return absl::InvalidArgumentError("Target text size should be 1.");
-  }
-
   // TODO(b/435040163): Handle the temperature. Should it be calculated from
   // the sampler or the sampler parameters? For now, hardcode it to 1.0f for
   // testing.
@@ -564,6 +561,50 @@ SessionBasic::RunTextScoringAsync(
         }
         callback(ScoreCustomSampling(
             executor_, tokenizer_, target_text, temperature,
+            std::move(decoded_ids_buffer.Value()), store_token_lengths));
+      }));
+  return nullptr;
+}
+
+absl::StatusOr<Responses> SessionBasic::RunTokenIdScoring(
+    const std::vector<TokenIds>& target_token_ids, bool store_token_lengths) {
+  absl::StatusOr<Responses> collected_responses;
+  auto scoring_sync_callback =
+      [&collected_responses](absl::StatusOr<Responses> responses) {
+        collected_responses = std::move(responses);
+      };
+
+  ASSIGN_OR_RETURN(
+      auto task_controller,
+      RunTokenIdScoringAsync(target_token_ids,
+                             std::move(scoring_sync_callback),
+                             store_token_lengths));
+  RETURN_IF_ERROR(worker_thread_pool_.WaitUntilDone(Engine::kDefaultTimeout));
+  return collected_responses;
+}
+
+absl::StatusOr<std::unique_ptr<Engine::Session::TaskController>>
+SessionBasic::RunTokenIdScoringAsync(
+    const std::vector<TokenIds>& target_token_ids,
+    absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback,
+    bool store_token_lengths) {
+  // TODO(b/435040163): Handle the temperature. Should it be calculated from
+  // the sampler or the sampler parameters? For now, hardcode it to 1.0f for
+  // testing.
+  auto temperature = 1.0f;
+  RETURN_IF_ERROR(worker_thread_pool_.Schedule(
+      [this, callback = std::move(callback), target_token_ids,
+       store_token_lengths, temperature]() mutable {
+        std::vector<int> decoded_ids(session_config_.GetNumOutputCandidates(),
+                                     last_prefill_token_id_);
+        auto decoded_ids_buffer = CopyToTensorBuffer<int>(
+            decoded_ids, {session_config_.GetNumOutputCandidates(), 1});
+        if (!decoded_ids_buffer.HasValue()) {
+          callback(absl::InternalError(decoded_ids_buffer.Error().Message()));
+          return;
+        }
+        callback(Tasks::ScoreTokenIds(
+            executor_, target_token_ids, temperature,
             std::move(decoded_ids_buffer.Value()), store_token_lengths));
       }));
   return nullptr;
