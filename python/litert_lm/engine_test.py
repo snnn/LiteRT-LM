@@ -133,6 +133,30 @@ class EngineTest(LiteRtLmTestBase):
     with self._create_engine() as engine:
       self.assertIsInstance(engine, litert_lm.AbstractEngine)
 
+  def test_engine_tokenization_api(self):
+    with self._create_engine() as engine:
+      token_ids = engine.tokenize("Hello world!")
+      self.assertNotEmpty(token_ids)
+      self.assertTrue(all(isinstance(token_id, int) for token_id in token_ids))
+
+      decoded = engine.detokenize(token_ids)
+      self.assertIsInstance(decoded, str)
+      self.assertNotEmpty(decoded)
+
+  def test_engine_special_token_metadata(self):
+    with self._create_engine() as engine:
+      bos_token_id = engine.bos_token_id
+      if bos_token_id is not None:
+        self.assertIsInstance(bos_token_id, int)
+
+      eos_token_ids = engine.eos_token_ids
+      self.assertIsInstance(eos_token_ids, list)
+      for stop_token_ids in eos_token_ids:
+        self.assertIsInstance(stop_token_ids, list)
+        self.assertTrue(
+            all(isinstance(token_id, int) for token_id in stop_token_ids)
+        )
+
   def test_conversation_abc_inheritance(self):
     with (
         self._create_engine() as engine,

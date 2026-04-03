@@ -26,8 +26,8 @@
 #include <vector>
 
 #include "nanobind/nanobind.h"
-#include "nanobind/stl/optional.h"  // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
+#include "nanobind/stl/optional.h"     // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"   // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/unique_ptr.h"   // IWYU pragma: keep
 #include "nanobind/stl/variant.h"      // IWYU pragma: keep
@@ -44,6 +44,7 @@
 #include "nlohmann/json_fwd.hpp"  // from @nlohmann_json
 #include "nanobind_json/nanobind_json.hpp"  // from @nanobind_json  // IWYU pragma: keep
 #include "litert/c/internal/litert_logging.h"  // from @litert
+#include "runtime/components/tokenizer.h"
 #include "runtime/conversation/conversation.h"
 #include "runtime/conversation/io_types.h"
 #include "runtime/engine/engine.h"
@@ -52,6 +53,7 @@
 #include "runtime/engine/io_types.h"
 #include "runtime/executor/executor_settings_base.h"
 #include "runtime/executor/llm_executor_settings.h"
+#include "runtime/proto/token.pb.h"
 #include "tflite/logger.h"  // from @litert
 #include "tflite/minimal_logging.h"  // from @litert
 
@@ -173,6 +175,46 @@ void SetBackendAttr(nb::object& py_engine, const nb::handle& backend_handle) {
   } else {
     py_engine.attr("backend") = backend_handle;
   }
+}
+
+std::vector<int> Tokenize(const Engine& engine, std::string_view text) {
+  Tokenizer& tokenizer = const_cast<Tokenizer&>(engine.GetTokenizer());
+  return VALUE_OR_THROW(tokenizer.TextToTokenIds(text));
+}
+
+std::string Detokenize(const Engine& engine,
+                       const std::vector<int>& token_ids) {
+  Tokenizer& tokenizer = const_cast<Tokenizer&>(engine.GetTokenizer());
+  return VALUE_OR_THROW(tokenizer.TokenIdsToText(token_ids));
+}
+
+std::optional<int> GetBosTokenId(const Engine& engine) {
+  const auto& metadata = engine.GetEngineSettings().GetLlmMetadata();
+  if (!metadata.has_value() || !metadata->has_start_token() ||
+      !metadata->start_token().has_token_ids() ||
+      metadata->start_token().token_ids().ids_size() == 0) {
+    return std::nullopt;
+  }
+  return metadata->start_token().token_ids().ids(0);
+}
+
+// This function is only called once per model during initialization, not per
+// sample. So the performance is not important.
+std::vector<std::vector<int>> GetEosTokenIds(const Engine& engine) {
+  std::vector<std::vector<int>> stop_token_ids;
+  const auto& metadata = engine.GetEngineSettings().GetLlmMetadata();
+  if (!metadata.has_value()) {
+    return stop_token_ids;
+  }
+  stop_token_ids.reserve(metadata->stop_tokens_size());
+  for (const auto& stop_token : metadata->stop_tokens()) {
+    if (!stop_token.has_token_ids()) {
+      continue;
+    }
+    stop_token_ids.emplace_back(stop_token.token_ids().ids().begin(),
+                                stop_token.token_ids().ids().end());
+  }
+  return stop_token_ids;
 }
 
 // Helper to convert C++ Responses to Python Responses dataclass.
@@ -655,7 +697,15 @@ NB_MODULE(litert_lm_ext, module) {
             return VALUE_OR_THROW(self.CreateSession(session_config));
           },
           nb::kw_only(), nb::arg("apply_prompt_template") = true,
-          "Creates a new session for this engine.");
+          "Creates a new session for this engine.")
+      .def("tokenize", &Tokenize, nb::arg("text"),
+           "Tokenizes text using the engine's tokenizer.")
+      .def("detokenize", &Detokenize, nb::arg("token_ids"),
+           "Decodes token ids using the engine's tokenizer.")
+      .def_prop_ro("bos_token_id", &GetBosTokenId,
+                   "Returns the configured BOS token id, if any.")
+      .def_prop_ro("eos_token_ids", &GetEosTokenIds,
+                   "Returns the configured EOS/stop token sequences.");
 
   nb::class_<Engine::Session>(module, "Session", nb::dynamic_attr(),
                               "Session is responsible for hosting the "
