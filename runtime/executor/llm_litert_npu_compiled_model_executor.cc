@@ -1355,13 +1355,15 @@ absl::Status LlmLiteRtNpuCompiledModelExecutor::DecodeInternal(
   auto start_prepare_inputs = absl::Now();
 
   {
-    if (id != -1) {
-      // Decode input tokens.
-      RETURN_IF_ERROR(SetFirstElement(
-          embedder_context_.inference_context
-              .decode_input_buffers[EmbedderSignatures::kEmbedderInput],
-          id));
+    if (id == -1) {
+      return absl::InvalidArgumentError("No id available to be decoded.");
     }
+
+    // Decode input tokens.
+    RETURN_IF_ERROR(SetFirstElement(
+        embedder_context_.inference_context
+            .decode_input_buffers[EmbedderSignatures::kEmbedderInput],
+        id));
 
     // Always update decode input position and timestep, even if
     // run_rope_and_mask is false. The LLM and Cache Update models still need to
@@ -1387,7 +1389,7 @@ absl::Status LlmLiteRtNpuCompiledModelExecutor::DecodeInternal(
   latency_stats_.decode_prepare_input_latency_us +=
       absl::ToInt64Microseconds(end_prepare_inputs - start_prepare_inputs);
 
-  if (!UseEmbeddingLookupManager() && id != -1) {
+  if (!UseEmbeddingLookupManager()) {
     // Invoke embedder signature for Gemma3, because we don't have the embedding
     // lookup manager to do it for us.
     {
@@ -1428,7 +1430,7 @@ absl::Status LlmLiteRtNpuCompiledModelExecutor::DecodeInternal(
   }
 
   {
-    if (embedder_per_layer_context_.has_value() && id != -1) {
+    if (embedder_per_layer_context_.has_value()) {
       auto start = absl::Now();
       auto res =
           embedder_per_layer_context_->embedder_per_layer_compiled_model.Run(

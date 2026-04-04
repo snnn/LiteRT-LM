@@ -783,10 +783,6 @@ absl::Status ResourceManager::TryLoadingAudioExecutor() {
       audio_executor_settings_->GetBackend() == litert::lm::Backend::GPU) {
     return absl::InvalidArgumentError(
         "Audio executor backend is not supported.");
-  } else if (audio_executor_settings_->GetBackend() ==
-             litert::lm::Backend::GPU_ARTISAN) {
-    return absl::InvalidArgumentError(
-        "Audio executor backend is not supported.");
   } else {
     return absl::InvalidArgumentError(
         "Audio executor backend is not supported.");

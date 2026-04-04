@@ -448,15 +448,23 @@ absl::Status RunSingleTurnConversation(const std::string& input_prompt,
   json content_list = json::array();
   RETURN_IF_ERROR(BuildContentList(input_prompt, content_list, settings));
   std::stringstream captured_output;
+  OptionalArgs optional_args;
+  if (settings.max_output_tokens > 0) {
+    optional_args.max_output_tokens = settings.max_output_tokens;
+  }
+
   if (settings.async) {
     RETURN_IF_ERROR(conversation->SendMessageAsync(
         json::object({{"role", "user"}, {"content", content_list}}),
-        CreatePrintMessageCallback(captured_output, settings.benchmark)));
+        CreatePrintMessageCallback(captured_output, settings.benchmark),
+        std::move(optional_args)));
     RETURN_IF_ERROR(engine->WaitUntilDone(kWaitUntilDoneTimeout));
   } else {
-    ASSIGN_OR_RETURN(auto model_message,
-                     conversation->SendMessage(json::object(
-                         {{"role", "user"}, {"content", content_list}})));
+    ASSIGN_OR_RETURN(
+        auto model_message,
+        conversation->SendMessage(
+            json::object({{"role", "user"}, {"content", content_list}}),
+            std::move(optional_args)));
     RETURN_IF_ERROR(PrintJsonMessage(std::get<JsonMessage>(model_message),
                                      captured_output));
   }
@@ -487,15 +495,23 @@ absl::Status RunMultiTurnConversation(const LiteRtLmSettings& settings,
     if (content_list.empty()) {
       continue;
     }
+    OptionalArgs optional_args;
+    if (settings.max_output_tokens > 0) {
+      optional_args.max_output_tokens = settings.max_output_tokens;
+    }
+
     if (settings.async) {
       RETURN_IF_ERROR(conversation->SendMessageAsync(
           json::object({{"role", "user"}, {"content", content_list}}),
-          CreatePrintMessageCallback(captured_output, settings.benchmark)));
+          CreatePrintMessageCallback(captured_output, settings.benchmark),
+          std::move(optional_args)));
       RETURN_IF_ERROR(engine->WaitUntilDone(kWaitUntilDoneTimeout));
     } else {
-      ASSIGN_OR_RETURN(auto model_message,
-                       conversation->SendMessage(json::object(
-                           {{"role", "user"}, {"content", content_list}})));
+      ASSIGN_OR_RETURN(
+          auto model_message,
+          conversation->SendMessage(
+              json::object({{"role", "user"}, {"content", content_list}}),
+              std::move(optional_args)));
       RETURN_IF_ERROR(PrintJsonMessage(std::get<JsonMessage>(model_message),
                                        captured_output));
     }

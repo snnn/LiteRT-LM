@@ -14,10 +14,14 @@
 
 """Unit tests for the main litert-lm CLI."""
 
+import unittest.mock
+
 from absl.testing import absltest
 from click.testing import CliRunner
+from prompt_toolkit import key_binding
 
 from litert_lm_cli import main
+from litert_lm_cli import model
 
 
 class MainTest(absltest.TestCase):
@@ -37,6 +41,82 @@ class MainTest(absltest.TestCase):
     self.assertEqual(result_help.exit_code, 0)
     self.assertEqual(result_h.exit_code, 0)
     self.assertEqual(result_help.output, result_h.output)
+
+  @unittest.mock.patch(
+      "litert_lm_cli.model.Model.from_model_reference"
+  )
+  def test_run_with_piped_input(self, mock_from_model_ref):
+    mock_model = unittest.mock.MagicMock()
+    mock_from_model_ref.return_value = mock_model
+    mock_model.exists.return_value = True
+
+    runner = CliRunner()
+    # Mocking stdin by providing input to the runner
+    result = runner.invoke(
+        main.cli, ["run", "my-model"], input="Hello from pipe\n"
+    )
+
+    self.assertEqual(result.exit_code, 0)
+    mock_model.run_interactive.assert_called_once()
+    kwargs = mock_model.run_interactive.call_args.kwargs
+    self.assertEqual(kwargs["prompt"], "Hello from pipe")
+
+  @unittest.mock.patch(
+      "litert_lm_cli.model.Model.from_model_reference"
+  )
+  def test_run_with_prompt_and_piped_input(self, mock_from_model_ref):
+    mock_model = unittest.mock.MagicMock()
+    mock_from_model_ref.return_value = mock_model
+    mock_model.exists.return_value = True
+
+    runner = CliRunner()
+    # Mocking stdin by providing input to the runner
+    result = runner.invoke(
+        main.cli,
+        ["run", "my-model", "--prompt", "Prompt arg"],
+        input="Hello from pipe\n",
+    )
+
+    self.assertEqual(result.exit_code, 0)
+    mock_model.run_interactive.assert_called_once()
+    kwargs = mock_model.run_interactive.call_args.kwargs
+    self.assertEqual(kwargs["prompt"], "Prompt arg\n\nHello from pipe")
+
+  @unittest.mock.patch(
+      "litert_lm_cli.model.Model.from_model_reference"
+  )
+  def test_run_non_tty_no_input(self, mock_from_model_ref):
+    mock_model = unittest.mock.MagicMock()
+    mock_from_model_ref.return_value = mock_model
+    mock_model.exists.return_value = True
+
+    runner = CliRunner()
+    # No input provided, isatty will be False in CliRunner
+    result = runner.invoke(main.cli, ["run", "my-model"])
+
+    self.assertEqual(result.exit_code, 0)
+    # Should return early and not start the interactive session
+    mock_model.run_interactive.assert_not_called()
+
+  def test_create_keybindings(self):
+    m = model.Model(model_id="test_model", model_path="test_path")
+    kb = m._create_keybindings()
+    self.assertIsInstance(kb, key_binding.KeyBindings)
+    # Check if expected keys are added.
+    keys = [str(b.keys) for b in kb.bindings]
+    # Check if enter (ControlM), c-j (ControlJ), esc+enter, c-c (ControlC).
+    self.assertTrue(any("ControlM" in k and "Escape" not in k for k in keys))
+    self.assertTrue(any("ControlJ" in k for k in keys))
+    self.assertTrue(any("Escape" in k and "ControlM" in k for k in keys))
+    self.assertTrue(any("ControlC" in k for k in keys))
+
+  def test_run_no_template_flag(self):
+    runner = CliRunner()
+    # Test that --no-template is a valid option for the run command.
+    # We use --help to avoid actually running the model.
+    result = runner.invoke(main.cli, ["run", "--help"])
+    self.assertEqual(result.exit_code, 0)
+    self.assertIn("--no-template", result.output)
 
 
 if __name__ == "__main__":

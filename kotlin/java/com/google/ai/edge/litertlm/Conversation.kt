@@ -96,7 +96,7 @@ class Conversation(
     checkIsAlive()
 
     var currentMessageJson = message.toJson()
-    var extraContextJsonString = extraContext.toJsonObject().toString()
+    val extraContextJsonString = extraContext.toJsonObject().toString()
 
     for (i in 0..<RECURRING_TOOL_CALL_LIMIT) {
       val responseJsonString =

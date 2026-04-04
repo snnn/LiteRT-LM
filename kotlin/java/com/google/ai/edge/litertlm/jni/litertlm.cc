@@ -838,7 +838,8 @@ JNI_METHOD(nativeConversationGetBenchmarkInfo)(JNIEnv* env, jclass thiz,
 LITERTLM_JNIEXPORT jlong JNICALL JNI_METHOD(nativeCreateConversation)(
     JNIEnv* env, jclass thiz, jlong engine_pointer, jobject sampler_config_obj,
     jstring messages_json_string, jstring tools_description_json_string,
-    jstring channels_json_string, jboolean enable_constrained_decoding) {
+    jstring channels_json_string, jstring extra_context_json_string,
+    jboolean enable_constrained_decoding) {
   Engine* engine = reinterpret_cast<Engine*>(engine_pointer);
 
   // Create a native SessionConfig
@@ -871,6 +872,12 @@ LITERTLM_JNIEXPORT jlong JNICALL JNI_METHOD(nativeCreateConversation)(
     ThrowLiteRtLmJniException(
         env, "tools_json should be a json array. Got: " + tool_json.dump());
     return 0;
+  }
+
+  nlohmann::ordered_json extra_context =
+      GetExtraContextJson(env, extra_context_json_string);
+  if (!extra_context.is_null() && !extra_context.empty()) {
+    json_preface.extra_context = extra_context;
   }
 
   // Create a ConversationConfig::Builder

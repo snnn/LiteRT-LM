@@ -34,6 +34,7 @@
 #include "absl/strings/str_replace.h"  // from @com_google_absl
 #include "absl/strings/string_view.h"  // from @com_google_absl
 #include "absl/types/span.h"  // from @com_google_absl
+#include "litert/cc/litert_element_type.h"  // from @litert
 #include "litert/cc/litert_macros.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer.h"  // from @litert
 #include "runtime/components/constrained_decoding/constrained_decoder.h"
@@ -50,14 +51,20 @@
 #include "runtime/proto/sampler_params.pb.h"
 #include "runtime/util/convert_tensor_buffer.h"
 #include "runtime/util/status_macros.h"  //NOLINT
+#include "tflite/types/half.h"  // from @litert
 
 namespace litert::lm::Tasks {
 namespace {
 
-struct ScoreStepResult {
-  std::vector<float> log_likelihoods;
-  std::vector<int> greedy_token_ids;
-};
+// Converts a span of fp16 values to a vector of fp32 values.
+// TODO: b/499304966 - move this to a common util file and add tests.
+void ConvertFp16ToFp32(absl::Span<const tflite::half> fp16_values,
+                       std::vector<float>& out) {
+  out.resize(fp16_values.size());
+  for (int i = 0; i < fp16_values.size(); ++i) {
+    out[i] = static_cast<float>(fp16_values[i]);
+  }
+}
 
 // TODO(b/423364170): all LLM Executors should respect the max number of tokens
 // returned by the model. We should remove this default value once all Executors
@@ -136,7 +143,6 @@ class DecodeOneStep {
   absl::StatusOr<bool> Run(
       std::optional<litert::TensorBuffer> decoded_ids = std::nullopt) {
     ASSIGN_OR_RETURN(auto token_ids, DecodeAndSample(std::move(decoded_ids)));
-    token_ids_ = token_ids;
 
     size_t sequence_length = token_ids[0].size();
     for (size_t i = 1; i < token_ids.size(); ++i) {
@@ -218,20 +224,15 @@ class DecodeOneStep {
 
   const std::vector<std::string>& GetResultText() const { return result_text_; }
 
-  const std::vector<std::vector<int>>& GetTokenIds() const { return token_ids_; }
-
-  const std::vector<bool>& GetStopTokensFound() const {
-    return stop_token_detector_.GetStopTokensFound();
-  }
-
   // This function is only supported for external sampling.
   // It computes the log likelihoods for the sampled ids corresponding to the
   // ids of a batch and returns it as a vector of floats.
   // step_input_ids: The ids corresponding to the input text for the batch.
   // decoded_ids: The decoded id tensor buffer in which the sampled ids are
   //              written so that the model uses reference text future step.
-  // Returns: The log likelihoods and greedy token ids for the batch.
-  absl::StatusOr<ScoreStepResult> RunScoreStep(
+  // Returns: A vector of log likelihoods for the sampled ids.
+  // TODO: b/499304966 - Add tests for the float16 path.
+  absl::StatusOr<std::vector<float>> RunScoreStep(
       const float temperature, const std::vector<int>& step_input_ids,
       litert::TensorBuffer decoded_ids) {
     LITERT_ASSIGN_OR_RETURN(auto duplicate_decoded_ids,
@@ -249,36 +250,46 @@ class DecodeOneStep {
       RETURN_IF_ERROR(benchmark_info_->TimeMarkDelta("executor_decode"));
     }
     decoded_ids.Write<int>(step_input_ids);
-    auto logits_data_or = ReferTensorBufferAsSpan<float>(output_logits);
+    LITERT_ASSIGN_OR_RETURN(auto logits_tensor_type,
+                            output_logits.TensorType());
+    auto logits_dims = logits_tensor_type.Layout().Dimensions();
+    // Logits dims are {batch, seq, vocab}. For scoring, we expect batch size to
+    // be the same as the input batch size, sequence length to be 1, and vocab
+    // size to be the same as the tokenizer size.
+    RET_CHECK_EQ(logits_dims.size(), 3)
+        << "Output logits must have shape [batch, seq, vocab].";
+    const int batch_size = step_input_ids.size();
+    RET_CHECK_EQ(logits_dims[0], batch_size)
+        << "Logits batch size does not match the input batch size.";
+    RET_CHECK_EQ(logits_dims[1], 1) << "Scoring expects a single decode step.";
+
     absl::Span<float> logits_data;
     std::vector<float> logits_data_buffer;
-    // Download the data if it is not in host memory.
-    if (!logits_data_or) {
-      LITERT_ASSIGN_OR_RETURN(auto logits_size, output_logits.PackedSize());
-      logits_data_buffer.resize(logits_size / sizeof(float));
-      LITERT_RETURN_IF_ERROR(
-          output_logits.Read(absl::MakeSpan(logits_data_buffer)));
+    if (logits_tensor_type.ElementType() == litert::ElementType::Float32) {
+      auto logits_data_or = ReferTensorBufferAsSpan<float>(output_logits);
+      if (!logits_data_or) {
+        LITERT_ASSIGN_OR_RETURN(logits_data_buffer,
+                                CopyFromTensorBuffer<float>(output_logits));
+        logits_data = absl::MakeSpan(logits_data_buffer);
+      } else {
+        logits_data = *logits_data_or;
+      }
+    } else if (logits_tensor_type.ElementType() ==
+               litert::ElementType::Float16) {
+      LITERT_ASSIGN_OR_RETURN(
+          auto logits_data_f16,
+          CopyFromTensorBuffer<tflite::half>(output_logits));
+      ConvertFp16ToFp32(absl::MakeConstSpan(logits_data_f16),
+                        logits_data_buffer);
       logits_data = absl::MakeSpan(logits_data_buffer);
     } else {
-      logits_data = *logits_data_or;
+      return absl::InvalidArgumentError(
+          absl::StrCat("Unsupported logits element type for scoring: ",
+                       logits_tensor_type.ElementType()));
     }
-    const int batch_size = step_input_ids.size();
-    const int vocab_size = logits_data.size() / batch_size;
-    std::vector<int> greedy_token_ids(batch_size);
-    for (int batch_index = 0; batch_index < batch_size; ++batch_index) {
-      auto max_iterator = std::max_element(
-          logits_data.begin() + batch_index * vocab_size,
-          logits_data.begin() + (batch_index + 1) * vocab_size);
-      greedy_token_ids[batch_index] = std::distance(
-          logits_data.begin() + batch_index * vocab_size, max_iterator);
-    }
-    ASSIGN_OR_RETURN(auto log_likelihoods,
-                     ComputeLogLikelihood(logits_data, step_input_ids,
-                                          temperature));
-    ScoreStepResult result;
-    result.log_likelihoods = std::move(log_likelihoods);
-    result.greedy_token_ids = std::move(greedy_token_ids);
-    return result;
+    RET_CHECK_EQ(logits_data.size(), batch_size * logits_dims[2])
+        << "Logits buffer size does not match logits tensor shape.";
+    return ComputeLogLikelihood(logits_data, step_input_ids, temperature);
   }
 
  private:
@@ -370,7 +381,6 @@ class DecodeOneStep {
   std::vector<std::vector<int>> bpe_partial_token_ids_;
   std::vector<std::queue<std::string>> pending_stop_tokens_;
   std::vector<std::string> result_text_;
-  std::vector<std::vector<int>> token_ids_;
 
   bool is_first_step_ = true;
 };
@@ -438,8 +448,6 @@ absl::StatusOr<Responses> Decode(
   std::vector<std::string> final_texts(num_output_candidates);
   // The final scores for each candidate.
   std::vector<float> final_scores(num_output_candidates);
-  // The final token ids for each candidate.
-  std::vector<std::vector<int>> final_token_ids(num_output_candidates);
   // The accumulated scores for each candidate (for custom sampling).
   std::vector<float> accumulated_scores(num_output_candidates);
   // The number of decoded tokens for each candidate (for custom sampling).
@@ -494,11 +502,6 @@ absl::StatusOr<Responses> Decode(
       step_scores.resize(num_output_candidates);
     }
     bool any_updates = false;
-    for (int j = 0; j < num_output_candidates; ++j) {
-      const auto& step_token_ids = run_one_step.GetTokenIds()[j];
-      final_token_ids[j].insert(final_token_ids[j].end(), step_token_ids.begin(),
-                                step_token_ids.end());
-    }
     for (int j = 0; j < num_output_candidates; ++j) {
       std::string output_text = run_one_step.GetResultText()[j];
       if (output_text.empty()) {
@@ -584,82 +587,29 @@ absl::StatusOr<Responses> Decode(
   TaskState task_state = executor.GetCurrentStep().value() >= max_num_tokens
                              ? TaskState::kMaxNumTokensReached
                              : TaskState::kDone;
-  std::vector<std::string> finish_reasons(num_output_candidates, "unknown");
-  const bool hit_length_limit =
-      task_state == TaskState::kMaxNumTokensReached ||
-      num_decode_steps >= max_output_tokens ||
-      (benchmark_decode_token_count > 0 &&
-       num_decode_steps >= benchmark_decode_token_count);
-  const auto& stop_tokens_found = run_one_step.GetStopTokensFound();
-  for (int j = 0; j < num_output_candidates; ++j) {
-    if (stop_tokens_found[j]) {
-      finish_reasons[j] = "stop";
-    } else if (hit_length_limit) {
-      finish_reasons[j] = "length";
-    }
-  }
-  auto responses = Responses(std::move(task_state), std::move(final_texts),
-                             std::move(final_scores));
-  responses.GetMutableTokenIds() = std::move(final_token_ids);
-  responses.GetMutableFinishReasons() = std::move(finish_reasons);
-  return responses;
+  return Responses(std::move(task_state), std::move(final_texts),
+                   std::move(final_scores));
 }
 
 absl::StatusOr<Responses> Score(
     LlmExecutor& executor, Tokenizer& tokenizer,
     const std::vector<absl::string_view>& target_texts, const float temperature,
     litert::TensorBuffer decoded_ids, bool store_token_lengths) {
-  std::vector<TokenIds> target_token_ids;
-  target_token_ids.reserve(target_texts.size());
-  for (const auto& target : target_texts) {
-    ASSIGN_OR_RETURN(std::vector<int> ids, tokenizer.TextToTokenIds(target));
-    target_token_ids.push_back(std::move(ids));
-  }
-  return ScoreTokenIds(executor, target_token_ids, temperature,
-                       std::move(decoded_ids), store_token_lengths);
-}
-
-absl::StatusOr<Responses> ScoreTokenIds(
-    LlmExecutor& executor, const std::vector<TokenIds>& target_token_ids,
-    const float temperature, litert::TensorBuffer decoded_ids,
-    bool store_token_lengths) {
-  const int num_output_candidates = target_token_ids.size();
-  if (num_output_candidates == 0) {
-    return Responses(TaskState::kDone);
-  }
+  const int num_output_candidates = target_texts.size();
   const int max_num_tokens = TryGetMaxNumTokens(executor);
   std::optional<BenchmarkInfo> benchmark_info;
   // Create a dummy StopTokenDetector as it's not used in ScoreCustomSampling.
   StopTokenDetector dummy_stop_token_detector(num_output_candidates);
-  Tokenizer* tokenizer = nullptr;
-  // Tokenizer is unused for score-only paths.
-  class NoopTokenizer final : public Tokenizer {
-   public:
-    TokenizerType GetTokenizerType() const override {
-      return TokenizerType::kUnspecified;
-    }
-    absl::StatusOr<TokenIds> TextToTokenIds(absl::string_view) override {
-      return absl::UnimplementedError("TextToTokenIds is not supported.");
-    }
-    absl::StatusOr<int> TokenToId(absl::string_view) override {
-      return absl::UnimplementedError("TokenToId is not supported.");
-    }
-    absl::StatusOr<std::string> TokenIdsToText(const TokenIds&) override {
-      return absl::UnimplementedError("TokenIdsToText is not supported.");
-    }
-    std::vector<std::string> GetTokens() const override { return {}; }
-  } noop_tokenizer;
-  tokenizer = &noop_tokenizer;
-  DecodeOneStep run_one_step(&executor, tokenizer,
+  DecodeOneStep run_one_step(&executor, &tokenizer,
                              /*num_output_candidates=*/num_output_candidates,
                              dummy_stop_token_detector, benchmark_info,
                              /*sampler=*/std::nullopt,
                              /*constraint=*/nullptr);
   std::vector<std::vector<int>> ids_for_each_target_in_batch;
-  ids_for_each_target_in_batch.reserve(target_token_ids.size());
+  ids_for_each_target_in_batch.reserve(target_texts.size());
   int max_num_tokens_of_target_texts = 0;
-  for (const auto& target_ids : target_token_ids) {
-    std::vector<int> ids = target_ids;
+  for (const auto& target : target_texts) {
+    ASSIGN_OR_RETURN(std::vector<int> ids, tokenizer.TextToTokenIds(target));
     max_num_tokens_of_target_texts =
         std::max(max_num_tokens_of_target_texts, static_cast<int>(ids.size()));
     ids_for_each_target_in_batch.push_back(std::move(ids));
@@ -675,7 +625,6 @@ absl::StatusOr<Responses> ScoreTokenIds(
   // of the decoding process.
   std::vector<float> scores(num_output_candidates);
   std::vector<std::vector<float>> token_scores(num_output_candidates);
-  std::vector<std::vector<int>> greedy_token_ids(num_output_candidates);
   // We support multiple targets by padding the targets with a null token which
   // does not exist in the vocabulary and thus does not contribute to the
   // perplexity.
@@ -693,7 +642,7 @@ absl::StatusOr<Responses> ScoreTokenIds(
       }
     }
     LITERT_ASSIGN_OR_RETURN(auto decoded_ids_copy, decoded_ids.Duplicate());
-    ASSIGN_OR_RETURN(auto step_result,
+    ASSIGN_OR_RETURN(std::vector<float> step_log_likelihoods,
                      run_one_step.RunScoreStep(
                          temperature, decoded_ids_for_each_target_in_batch,
                          std::move(decoded_ids_copy)));
@@ -701,9 +650,8 @@ absl::StatusOr<Responses> ScoreTokenIds(
       const int size_of_jth_target = ids_for_each_target_in_batch[j].size();
       // Only add the log likelihood of the non-padded tokens to the score.
       if (i < size_of_jth_target) {
-        scores[j] += step_result.log_likelihoods[j];
-        token_scores[j].push_back(step_result.log_likelihoods[j]);
-        greedy_token_ids[j].push_back(step_result.greedy_token_ids[j]);
+        scores[j] += step_log_likelihoods[j];
+        token_scores[j].push_back(step_log_likelihoods[j]);
       }
     }
   }
@@ -719,7 +667,6 @@ absl::StatusOr<Responses> ScoreTokenIds(
   auto responses = Responses(TaskState::kDone, /*response_texts=*/{},
                              std::move(scores), std::move(token_lengths));
   responses.GetMutableTokenScores() = std::move(token_scores);
-  responses.GetMutableGreedyTokenIds() = std::move(greedy_token_ids);
   return responses;
 }
 

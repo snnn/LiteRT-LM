@@ -28,6 +28,7 @@
 #include "absl/status/statusor.h"  // from @com_google_absl
 #include "absl/strings/string_view.h"  // from @com_google_absl
 #include "absl/synchronization/mutex.h"  // from @com_google_absl
+#include "absl/types/span.h"  // from @com_google_absl
 #include "nlohmann/json_fwd.hpp"  // from @nlohmann_json
 #include "runtime/components/constrained_decoding/constraint.h"
 #include "runtime/components/constrained_decoding/constraint_provider.h"
@@ -85,6 +86,11 @@ class ConversationConfig {
 
   // Returns the channels configured for the conversation.
   const std::vector<Channel>& GetChannels() const { return channels_; }
+
+  // Returns whether to filter channel content from the KV cache.
+  bool filter_channel_content_from_kv_cache() const {
+    return filter_channel_content_from_kv_cache_;
+  }
 
  public:
   // Builder class for ConversationConfig.
@@ -160,11 +166,22 @@ class ConversationConfig {
       return *this;
     }
 
+    // Sets whether to filter channel content from the KV cache. This is useful
+    // when the model responds with "channel" content, e.g. thinking/reasoning
+    // tokens, that should not be persisted in the KV cache.
+    Builder& SetFilterChannelContentFromKvCache(
+        bool filter_channel_content_from_kv_cache) {
+      filter_channel_content_from_kv_cache_ =
+          filter_channel_content_from_kv_cache;
+      return *this;
+    }
+
     absl::StatusOr<ConversationConfig> Build(const Engine& engine) {
       return ConversationConfig::CreateInternal(
           engine, session_config_, preface_, overwrite_prompt_template_,
           overwrite_processor_config_, enable_constrained_decoding_,
-          prefill_preface_on_init_, constraint_provider_config_, channels_);
+          prefill_preface_on_init_, constraint_provider_config_, channels_,
+          filter_channel_content_from_kv_cache_);
     }
 
     // Returns a unique pointer to a ConversationConfig.
@@ -183,6 +200,7 @@ class ConversationConfig {
     bool prefill_preface_on_init_ = false;
     std::optional<ConstraintProviderConfig> constraint_provider_config_;
     std::optional<std::vector<Channel>> channels_ = std::nullopt;
+    bool filter_channel_content_from_kv_cache_ = false;
   };
 
   // Returns the constrained decoding config.
@@ -227,7 +245,8 @@ class ConversationConfig {
       bool prefill_preface_on_init = false,
       std::optional<ConstraintProviderConfig> constraint_provider_config =
           std::nullopt,
-      std::optional<std::vector<Channel>> channels = std::nullopt);
+      std::optional<std::vector<Channel>> channels = std::nullopt,
+      bool filter_channel_content_from_kv_cache = false);
 
   explicit ConversationConfig(SessionConfig session_config, Preface preface,
                               PromptTemplate prompt_template,
@@ -236,7 +255,8 @@ class ConversationConfig {
                               bool prefill_preface_on_init = false,
                               std::optional<ConstraintProviderConfig>
                                   constraint_provider_config = std::nullopt,
-                              std::vector<Channel> channels = {})
+                              std::vector<Channel> channels = {},
+                              bool filter_channel_content_from_kv_cache = false)
       : session_config_(std::move(session_config)),
         preface_(std::move(preface)),
         prompt_template_(std::move(prompt_template)),
@@ -244,7 +264,9 @@ class ConversationConfig {
         constrained_decoding_enabled_(constrained_decoding_enabled),
         prefill_preface_on_init_(prefill_preface_on_init),
         constraint_provider_config_(std::move(constraint_provider_config)),
-        channels_(std::move(channels)) {}
+        channels_(std::move(channels)),
+        filter_channel_content_from_kv_cache_(
+            filter_channel_content_from_kv_cache) {}
 
   SessionConfig session_config_;
   Preface preface_;
@@ -254,6 +276,7 @@ class ConversationConfig {
   bool prefill_preface_on_init_;
   std::optional<ConstraintProviderConfig> constraint_provider_config_;
   std::vector<Channel> channels_;
+  bool filter_channel_content_from_kv_cache_;
 };
 
 // Optional arguments for sending a message to the LLM.
@@ -538,6 +561,40 @@ class Conversation {
       const std::optional<std::string>& task_group_id,
       std::unique_ptr<Engine::Session::TaskController> task_controller);
 
+  // Returns the prefill text for the given messages.
+  //
+  // The prefill text is obtained by taking the difference between the rendered
+  // string when the template context contains only the old message and the
+  // rendered string when the template context contains both the new and old
+  // messages.
+  //
+  // Args:
+  // - `old_messages`: The old messages that have already been prefilled.
+  // - `new_messages`: The new messages to be prefilled.
+  // - `optional_args`: The optional arguments for template rendering.
+  absl::StatusOr<std::string> GetPrefillTextForMessages(
+      absl::Span<const Message> old_messages,
+      absl::Span<const Message> new_messages,
+      const OptionalArgs& optional_args = OptionalArgs());
+
+  // Returns the input data vector for the given messages.
+  //
+  // Gets the prefill text for `new_messages` and converts it to an input data
+  // vector for `Session::RunPrefill`.
+  //
+  // Args:
+  // - `old_messages`: The old messages that have already been prefilled.
+  // - `new_messages`: The new messages to be prefilled.
+  // - `optional_args`: The optional arguments for template rendering.
+  absl::StatusOr<std::vector<InputData>> GetInputDataVectorForMessages(
+      absl::Span<const Message> old_messages,
+      absl::Span<const Message> new_messages,
+      const OptionalArgs& optional_args = OptionalArgs());
+
+  // Rewinds the session to the checkpoint after the most recent channel content
+  // and return the input data vector for all messages from that point onward.
+  absl::StatusOr<std::vector<InputData>> RewindAndGetInputDataVector();
+
   // Keep a reference to the creator engine to enable access to the shared
   // resources that might be required for features like cloning.
   Engine& engine_;
@@ -567,6 +624,20 @@ class Conversation {
   // depends on so that the session is destroyed before them. This is to avoid
   // memory corruption and null-pointer deference issues.
   std::unique_ptr<Engine::Session> session_;
+
+  // Whether checkpointing and rewinding are supported by the session.
+
+  // Assumed to be true initially but on the first error from SaveCheckpoint,
+  // will be set to false.  Rewinding is supported by SessionBasic but not by
+  // SessionAdvanced.
+  //
+  //  TODO(b/494425377): Support rewinding in SessionAdvanced and remove
+  //  session_checkpoint_supported_.
+  bool session_checkpoint_supported_ = true;
+
+  // The index of the message you have to rewind to in order to remove channel
+  // content from the KV cache. nullopt means no rewind is needed.
+  std::optional<int> checkpoint_message_index_ = std::nullopt;
 };
 }  // namespace litert::lm
 

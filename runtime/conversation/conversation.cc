@@ -14,6 +14,7 @@
 
 #include "runtime/conversation/conversation.h"
 
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -32,6 +33,7 @@
 #include "absl/synchronization/mutex.h"  // from @com_google_absl
 #include "absl/time/clock.h"  // from @com_google_absl
 #include "absl/time/time.h"  // from @com_google_absl
+#include "absl/types/span.h"  // from @com_google_absl
 #include "nlohmann/json.hpp"  // from @nlohmann_json
 #include "runtime/components/constrained_decoding/constraint_provider.h"
 #include "runtime/components/constrained_decoding/constraint_provider_config.h"
@@ -55,6 +57,12 @@ namespace litert::lm {
 
 namespace {
 
+constexpr absl::string_view kRoleKey = "role";
+constexpr absl::string_view kUser = "user";
+constexpr absl::string_view kChannelsKey = "channels";
+constexpr absl::string_view kChannelContentCheckpoint =
+    "channel_content_checkpoint";
+
 bool IsEmptyInputError(const absl::Status& status) {
   return absl::IsInvalidArgument(status) &&
          absl::StrContains(status.message(), "Input is empty");
@@ -74,6 +82,11 @@ bool IsEmptyPreface(const Preface& preface) {
           json_preface.extra_context.empty());
 }
 
+bool IsUserMessage(const nlohmann::ordered_json& json_msg) {
+  return json_msg.contains(kRoleKey) && json_msg[kRoleKey].is_string() &&
+         json_msg[kRoleKey].get<absl::string_view>() == kUser;
+}
+
 }  // namespace
 
 absl::StatusOr<ConversationConfig> ConversationConfig::CreateDefault(
@@ -88,7 +101,8 @@ absl::StatusOr<ConversationConfig> ConversationConfig::CreateInternal(
     std::optional<DataProcessorConfig> overwrite_processor_config,
     bool enable_constrained_decoding, bool prefill_preface_on_init,
     std::optional<ConstraintProviderConfig> constraint_provider_config,
-    std::optional<std::vector<Channel>> overwrite_channels) {
+    std::optional<std::vector<Channel>> overwrite_channels,
+    bool filter_channel_content_from_kv_cache) {
   if (preface.has_value() && !std::holds_alternative<JsonPreface>(*preface)) {
     return absl::InvalidArgumentError("Only JsonPreface is supported for now.");
   }
@@ -153,7 +167,8 @@ absl::StatusOr<ConversationConfig> ConversationConfig::CreateInternal(
   return ConversationConfig(
       session_config_copy, preface.value_or(JsonPreface()), prompt_template,
       processor_config, enable_constrained_decoding, prefill_preface_on_init,
-      std::move(constraint_provider_config), std::move(channels));
+      std::move(constraint_provider_config), std::move(channels),
+      filter_channel_content_from_kv_cache);
 }
 
 absl::StatusOr<std::string>
@@ -379,6 +394,23 @@ absl::StatusOr<Message> Conversation::SendMessage(const Message& message,
     return absl::InvalidArgumentError("Json message is required for now.");
   }
   auto json_message = std::get<nlohmann::ordered_json>(message);
+
+  // Session inputs to be prefilled.
+  std::vector<InputData> session_inputs;
+
+  // If the incoming message is a user message, rewind to the checkpoint that
+  // was saved before the assistant message containing channel content, and
+  // prefill all subsequent messages with channel content removed.
+  if (config_.filter_channel_content_from_kv_cache() &&
+      session_checkpoint_supported_ && IsUserMessage(json_message)) {
+    ASSIGN_OR_RETURN(std::vector<InputData> rewound_session_inputs,
+                     RewindAndGetInputDataVector());
+    session_inputs.insert(
+        session_inputs.end(),
+        std::make_move_iterator(rewound_session_inputs.begin()),
+        std::make_move_iterator(rewound_session_inputs.end()));
+  }
+
   ASSIGN_OR_RETURN(const std::string& single_turn_text,
                    GetSingleTurnText(message, optional_args));
   absl::MutexLock lock(history_mutex_);  // NOLINT
@@ -389,15 +421,29 @@ absl::StatusOr<Message> Conversation::SendMessage(const Message& message,
   } else {
     history_.push_back(json_message);
   }
+
   ASSIGN_OR_RETURN(
-      const auto session_inputs,
+      auto message_session_inputs,
       model_data_processor_->ToInputDataVector(
           single_turn_text, nlohmann::ordered_json::array({json_message}),
           optional_args.args.value_or(std::monostate())));
+  session_inputs.insert(session_inputs.end(),
+                        std::make_move_iterator(message_session_inputs.begin()),
+                        std::make_move_iterator(message_session_inputs.end()));
   RETURN_IF_ERROR(IgnoreEmptyInputError(session_->RunPrefill(session_inputs)));
   if (is_appending_message_) {
     return JsonMessage();
   } else {
+    if (config_.filter_channel_content_from_kv_cache() &&
+        session_checkpoint_supported_ &&
+        !checkpoint_message_index_.has_value()) {
+      // Before running decode, save a checkpoint for channel content
+      // filtering.
+      if (!session_->SaveCheckpoint(kChannelContentCheckpoint).ok()) {
+        session_checkpoint_supported_ = false;
+      }
+    }
+
     ASSIGN_OR_RETURN(
         auto decode_config,
         CreateDecodeConfig(std::move(optional_args.decoding_constraint),
@@ -417,7 +463,23 @@ absl::StatusOr<Message> Conversation::SendMessage(const Message& message,
     // Insert channel content into the message.
     InsertChannelContentIntoMessage(channel_content, assistant_message);
 
+    // Push assistant message onto history.
     history_.push_back(assistant_message);
+
+    // If the assistant message contains channel content, set the checkpoint
+    // message index to the current message index. This indicates the session
+    // should be rewound to this message and prefilled again when the next user
+    // message is sent to the model. The session checkpoint itself was already
+    // saved right before the model output was decoded.
+    if (config_.filter_channel_content_from_kv_cache() &&
+        session_checkpoint_supported_ &&
+        !checkpoint_message_index_.has_value() &&
+        std::holds_alternative<nlohmann::ordered_json>(assistant_message) &&
+        std::get<nlohmann::ordered_json>(assistant_message)
+            .contains(kChannelsKey)) {
+      checkpoint_message_index_ = history_.size() - 1;
+    }
+
     return assistant_message;
   }
 }
@@ -430,6 +492,23 @@ absl::Status Conversation::SendMessageAsync(
     return absl::InvalidArgumentError("Json message is required for now.");
   }
   auto json_message = std::get<nlohmann::ordered_json>(message);
+
+  // Session inputs to be prefilled.
+  std::vector<InputData> session_inputs;
+
+  // If the message is a user message, rewind to the checkpoint after the
+  // previous user message and prefill all assistant messages with channel
+  // content removed.
+  if (config_.filter_channel_content_from_kv_cache() &&
+      session_checkpoint_supported_ && IsUserMessage(json_message)) {
+    ASSIGN_OR_RETURN(std::vector<InputData> rewound_session_inputs,
+                     RewindAndGetInputDataVector());
+    session_inputs.insert(
+        session_inputs.end(),
+        std::make_move_iterator(rewound_session_inputs.begin()),
+        std::make_move_iterator(rewound_session_inputs.end()));
+  }
+
   ASSIGN_OR_RETURN(const std::string& single_turn_text,
                    GetSingleTurnText(message, optional_args));
   {
@@ -444,15 +523,32 @@ absl::Status Conversation::SendMessageAsync(
   }
 
   ASSIGN_OR_RETURN(
-      const auto session_inputs,
+      auto message_session_inputs,
       model_data_processor_->ToInputDataVector(
           single_turn_text, nlohmann::ordered_json::array({json_message}),
           optional_args.args.value_or(std::monostate())));
+  session_inputs.insert(session_inputs.end(),
+                        std::make_move_iterator(message_session_inputs.begin()),
+                        std::make_move_iterator(message_session_inputs.end()));
 
   absl::AnyInvocable<void(Message)> complete_message_callback =
       [this](const Message& complete_message) {
         absl::MutexLock lock(this->history_mutex_);  // NOLINT
         this->history_.push_back(complete_message);
+
+        // If the assistant message contains channel content, set the checkpoint
+        // message index. This indicates the session should be rewound to this
+        // message and prefilled again when another user message is sent to the
+        // model. The session checkpoint itself was already saved right before
+        // decode.
+        if (config_.filter_channel_content_from_kv_cache() &&
+            session_checkpoint_supported_ &&
+            !checkpoint_message_index_.has_value() &&
+            std::holds_alternative<nlohmann::ordered_json>(complete_message) &&
+            std::get<nlohmann::ordered_json>(complete_message)
+                .contains(kChannelsKey)) {
+          checkpoint_message_index_ = history_.size() - 1;
+        }
       };
 
   absl::AnyInvocable<void()> cancel_callback = [this]() {
@@ -506,6 +602,20 @@ absl::Status Conversation::SendMessageAsync(
                 // Scenario 2: Prefill was skipped due to empty input, or
                 // prefill completed successfully. In either case, we can now
                 // start the decode process.
+
+                // Before running decode, save a checkpoint for channel content
+                // filtering.
+                if (config_.filter_channel_content_from_kv_cache() &&
+                    session_checkpoint_supported_ &&
+                    !checkpoint_message_index_.has_value()) {
+                  // Save checkpoint in case we need to rewind later.
+                  if (!session_->SaveCheckpoint(kChannelContentCheckpoint)
+                           .ok()) {
+                    session_checkpoint_supported_ = false;
+                  }
+                }
+
+                // Run decode.
                 auto decode_task_controller = session_->RunDecodeAsync(
                     [callback](absl::StatusOr<Responses> responses) {
                       (*callback)(responses);
@@ -609,6 +719,122 @@ absl::StatusOr<std::unique_ptr<Conversation>> Conversation::Clone() {
     new_conversation->history_ = history_;
   }
   return new_conversation;
+}
+
+absl::StatusOr<std::string> Conversation::GetPrefillTextForMessages(
+    absl::Span<const Message> old_messages,
+    absl::Span<const Message> new_messages, const OptionalArgs& optional_args) {
+  // Create the template context for the `old` string.
+  PromptTemplateInput old_context;
+  old_context.add_generation_prompt = false;
+
+  // Fill the `old` template context with the preface.
+  RETURN_IF_ERROR(FillPrefaceForPromptTemplateInput(
+      preface_, model_data_processor_.get(), old_context));
+
+  // Merge extra context for the message into the extra context provided in the
+  // preface. Existing keys will be overwritten.
+  if (optional_args.extra_context.has_value()) {
+    for (const auto& [key, value] : optional_args.extra_context->items()) {
+      old_context.extra_context[key] = value;
+    }
+  }
+
+  // Add old messages to the `old` template context.
+  for (const auto& message : old_messages) {
+    if (std::holds_alternative<nlohmann::ordered_json>(message)) {
+      ASSIGN_OR_RETURN(nlohmann::ordered_json message_tmpl_input,
+                       model_data_processor_->MessageToTemplateInput(
+                           std::get<nlohmann::ordered_json>(message)));
+      old_context.messages.push_back(message_tmpl_input);
+    }
+  }
+
+  // Render the `old` string.
+  std::string old_string;
+  ASSIGN_OR_RETURN(old_string, prompt_template_.Apply(old_context));
+
+  // Copy the `old` template context to the `new` template context.
+  PromptTemplateInput new_context = old_context;
+
+  // Add new messages to the `new` template context.
+  nlohmann::ordered_json prefill_messages = nlohmann::ordered_json::array();
+  for (const auto& message : new_messages) {
+    if (std::holds_alternative<nlohmann::ordered_json>(message)) {
+      nlohmann::ordered_json json_msg =
+          std::get<nlohmann::ordered_json>(message);
+      prefill_messages.push_back(json_msg);
+      ASSIGN_OR_RETURN(nlohmann::ordered_json message_tmpl_input,
+                       model_data_processor_->MessageToTemplateInput(json_msg));
+      new_context.messages.push_back(message_tmpl_input);
+    }
+  }
+
+  // Render the `new` string.
+  ASSIGN_OR_RETURN(std::string new_string, prompt_template_.Apply(new_context));
+
+  if (old_string.length() > new_string.length()) {
+    return absl::InternalError(
+        absl::StrCat("The new rendered string is shorter than the previous "
+                     "rendered string. \nold_string: ",
+                     old_string, "\nnew_string: ", new_string));
+  }
+
+  if (new_string.substr(0, old_string.size()) != old_string) {
+    return absl::InternalError(
+        absl::StrCat("The new rendered string does not start with the previous "
+                     "rendered string. \nold_string: ",
+                     old_string, "\nnew_string: ", new_string));
+  }
+
+  return new_string.substr(old_string.length());
+}
+
+absl::StatusOr<std::vector<InputData>>
+Conversation::GetInputDataVectorForMessages(
+    absl::Span<const Message> old_messages,
+    absl::Span<const Message> new_messages, const OptionalArgs& optional_args) {
+  ASSIGN_OR_RETURN(
+      std::string prefill_text,
+      GetPrefillTextForMessages(old_messages, new_messages, optional_args));
+
+  nlohmann::ordered_json prefill_messages = nlohmann::ordered_json::array();
+  for (const auto& message : new_messages) {
+    if (std::holds_alternative<nlohmann::ordered_json>(message)) {
+      nlohmann::ordered_json json_msg =
+          std::get<nlohmann::ordered_json>(message);
+      prefill_messages.push_back(json_msg);
+    }
+  }
+
+  return model_data_processor_->ToInputDataVector(
+      prefill_text, prefill_messages,
+      optional_args.args.value_or(std::monostate()));
+}
+
+absl::StatusOr<std::vector<InputData>>
+Conversation::RewindAndGetInputDataVector() {
+  absl::MutexLock lock(history_mutex_);
+  if (!checkpoint_message_index_.has_value()) {
+    // If no rewind is needed, return early with empty InputData vector.
+    return std::vector<InputData>();
+  }
+
+  // Rewind the session to the saved checkpoint.
+  RETURN_IF_ERROR(session_->RewindToCheckpoint(kChannelContentCheckpoint));
+
+  // Get the InputData vector for the messages from the checkpoint onward.
+  ASSIGN_OR_RETURN(
+      std::vector<InputData> input_data_vector,
+      GetInputDataVectorForMessages(
+          absl::MakeSpan(history_).subspan(0, *checkpoint_message_index_),
+          absl::MakeSpan(history_).subspan(*checkpoint_message_index_),
+          OptionalArgs()));
+
+  // Clear the checkpoint message index.
+  checkpoint_message_index_ = std::nullopt;
+
+  return input_data_vector;
 }
 
 }  // namespace litert::lm

@@ -66,6 +66,32 @@ cc_test(
 )
 
 cc_library(
+    name = "data_stream",
+    srcs = ["data_stream.cc"],
+    hdrs = ["data_stream.h"],
+    deps = [
+        ":litert_status_util",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_test(
+    name = "data_stream_test",
+    srcs = ["data_stream_test.cc"],
+    data = ["//runtime/testdata"],
+    deps = [
+        ":data_stream",
+        ":file_data_stream",
+        ":test_utils",
+        "@com_google_googletest//:gtest_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+    ],
+)
+
+cc_library(
     name = "log_tensor_buffer",
     srcs = ["log_tensor_buffer.cc"],
     hdrs = ["log_tensor_buffer.h"],
@@ -151,6 +177,32 @@ cc_test(
         "@litert//litert/cc:litert_tensor_buffer_types",
         "@litert//litert/test:matchers",
         "//runtime/executor:llm_executor_io_types",
+    ],
+)
+
+cc_library(
+    name = "file_data_stream",
+    srcs = ["file_data_stream.cc"],
+    hdrs = ["file_data_stream.h"],
+    deps = [
+        ":data_stream",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+    ],
+)
+
+cc_test(
+    name = "file_data_stream_test",
+    srcs = ["file_data_stream_test.cc"],
+    data = ["//runtime/testdata"],
+    deps = [
+        ":file_data_stream",
+        ":test_utils",
+        "@com_google_googletest//:gtest_main",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:status_matchers",
+        "@com_google_absl//absl/status:statusor",
     ],
 )
 

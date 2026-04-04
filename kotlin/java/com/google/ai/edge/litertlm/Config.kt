@@ -103,9 +103,9 @@ data class EngineConfig(
  * @property channels A list of channels for the conversation. Each [Channel] is a part of the
  *   model's output that is separate from the primary response, such as a 'thinking' channel.
  *   Channel content will be written to [Message.channels] with the [Channel.channelName] as the
- *   key.
- *     - If `null`, uses the default channel configuration from the `LlmMetadata`.
- *     - If empty, channels will be disabled.
+ *   key. If `null`, uses the default channel configuration from the `LlmMetadata`. If empty,
+ *   channels will be disabled.
+ * @property extraContext Optional context passed to the prompt template rendering.
  */
 data class ConversationConfig
 @JvmOverloads
@@ -116,6 +116,7 @@ constructor(
   val samplerConfig: SamplerConfig? = null,
   val automaticToolCalling: Boolean = true,
   val channels: List<Channel>? = null,
+  val extraContext: Map<String, Any> = emptyMap(),
 )
 
 /**

@@ -26,8 +26,8 @@
 #include <vector>
 
 #include "nanobind/nanobind.h"
-#include "nanobind/stl/optional.h"  // IWYU pragma: keep
-#include "nanobind/stl/shared_ptr.h"  // IWYU pragma: keep
+#include "nanobind/stl/optional.h"     // IWYU pragma: keep
+#include "nanobind/stl/shared_ptr.h"   // IWYU pragma: keep
 #include "nanobind/stl/string_view.h"  // IWYU pragma: keep
 #include "nanobind/stl/unique_ptr.h"   // IWYU pragma: keep
 #include "nanobind/stl/variant.h"      // IWYU pragma: keep
@@ -44,6 +44,7 @@
 #include "nlohmann/json_fwd.hpp"  // from @nlohmann_json
 #include "nanobind_json/nanobind_json.hpp"  // from @nanobind_json  // IWYU pragma: keep
 #include "litert/c/internal/litert_logging.h"  // from @litert
+#include "runtime/components/tokenizer.h"
 #include "runtime/conversation/conversation.h"
 #include "runtime/conversation/io_types.h"
 #include "runtime/engine/engine.h"
@@ -52,6 +53,7 @@
 #include "runtime/engine/io_types.h"
 #include "runtime/executor/executor_settings_base.h"
 #include "runtime/executor/llm_executor_settings.h"
+#include "runtime/proto/token.pb.h"
 #include "tflite/logger.h"  // from @litert
 #include "tflite/minimal_logging.h"  // from @litert
 
@@ -175,44 +177,44 @@ void SetBackendAttr(nb::object& py_engine, const nb::handle& backend_handle) {
   }
 }
 
-template <typename T>
-std::optional<T> GetOptionalAttr(const nb::object& obj, const char* attr_name) {
-  if (!nb::hasattr(obj, attr_name)) {
-    return std::nullopt;
-  }
-  nb::object attr = obj.attr(attr_name);
-  if (attr.is_none()) {
-    return std::nullopt;
-  }
-  return nb::cast<T>(attr);
+std::vector<int> Tokenize(const Engine& engine, std::string_view text) {
+  Tokenizer& tokenizer = const_cast<Tokenizer&>(engine.GetTokenizer());
+  return VALUE_OR_THROW(tokenizer.TextToTokenIds(text));
 }
 
-SessionConfig ParseSessionOptions(const nb::handle& options) {
-  SessionConfig session_config = SessionConfig::CreateDefault();
-  if (options.is_none()) {
-    return session_config;
-  }
-  nb::object options_obj = nb::borrow<nb::object>(options);
-  auto apply_prompt_template_in_session = GetOptionalAttr<bool>(
-      options_obj, "apply_prompt_template_in_session");
-  if (apply_prompt_template_in_session.has_value()) {
-    session_config.SetApplyPromptTemplateInSession(
-        *apply_prompt_template_in_session);
-  }
-  return session_config;
+std::string Detokenize(const Engine& engine,
+                       const std::vector<int>& token_ids) {
+  Tokenizer& tokenizer = const_cast<Tokenizer&>(engine.GetTokenizer());
+  return VALUE_OR_THROW(tokenizer.TokenIdsToText(token_ids));
 }
 
-DecodeConfig ParseDecodeOptions(const nb::handle& options) {
-  DecodeConfig decode_config = DecodeConfig::CreateDefault();
-  if (options.is_none()) {
-    return decode_config;
+std::optional<int> GetBosTokenId(const Engine& engine) {
+  const auto& metadata = engine.GetEngineSettings().GetLlmMetadata();
+  if (!metadata.has_value() || !metadata->has_start_token() ||
+      !metadata->start_token().has_token_ids() ||
+      metadata->start_token().token_ids().ids_size() == 0) {
+    return std::nullopt;
   }
-  nb::object options_obj = nb::borrow<nb::object>(options);
-  auto max_output_tokens = GetOptionalAttr<int>(options_obj, "max_output_tokens");
-  if (max_output_tokens.has_value()) {
-    decode_config.SetMaxOutputTokens(*max_output_tokens);
+  return metadata->start_token().token_ids().ids(0);
+}
+
+// This function is only called once per model during initialization, not per
+// sample. So the performance is not important.
+std::vector<std::vector<int>> GetEosTokenIds(const Engine& engine) {
+  std::vector<std::vector<int>> stop_token_ids;
+  const auto& metadata = engine.GetEngineSettings().GetLlmMetadata();
+  if (!metadata.has_value()) {
+    return stop_token_ids;
   }
-  return decode_config;
+  stop_token_ids.reserve(metadata->stop_tokens_size());
+  for (const auto& stop_token : metadata->stop_tokens()) {
+    if (!stop_token.has_token_ids()) {
+      continue;
+    }
+    stop_token_ids.emplace_back(stop_token.token_ids().ids().begin(),
+                                stop_token.token_ids().ids().end());
+  }
+  return stop_token_ids;
 }
 
 // Helper to convert C++ Responses to Python Responses dataclass.
@@ -225,9 +227,7 @@ nb::object ToPyResponses(const Responses& responses) {
                                             : responses.GetTexts();
   auto scores = responses.GetScores();
   auto token_lengths = responses.GetTokenLengths().value_or(std::vector<int>());
-  auto greedy_token_ids =
-      responses.GetGreedyTokenIds().value_or(std::vector<std::vector<int>>());
-  return py_responses_class(texts, scores, token_lengths, greedy_token_ids);
+  return py_responses_class(texts, scores, token_lengths);
 }
 
 // Note: Consider move to C++ API.
@@ -366,51 +366,6 @@ struct PyBenchmarkInfo {
   double last_prefill_tokens_per_second;
   int last_decode_token_count;
   double last_decode_tokens_per_second;
-};
-
-class PyTokenizer {
- public:
-  explicit PyTokenizer(Engine* engine) : engine_(engine) {}
-
-  std::vector<int> Encode(std::string_view text) {
-    Tokenizer& tokenizer = const_cast<Tokenizer&>(engine_->GetTokenizer());
-    return VALUE_OR_THROW(tokenizer.TextToTokenIds(text));
-  }
-
-  std::string Decode(const std::vector<int>& token_ids) {
-    Tokenizer& tokenizer = const_cast<Tokenizer&>(engine_->GetTokenizer());
-    return VALUE_OR_THROW(tokenizer.TokenIdsToText(token_ids));
-  }
-
-  std::optional<int> GetBosTokenId() const {
-    const auto& metadata = engine_->GetEngineSettings().GetLlmMetadata();
-    if (!metadata.has_value() || !metadata->has_start_token() ||
-        !metadata->start_token().has_token_ids() ||
-        metadata->start_token().token_ids().ids_size() == 0) {
-      return std::nullopt;
-    }
-    return metadata->start_token().token_ids().ids(0);
-  }
-
-  std::vector<std::vector<int>> GetEosTokenIds() const {
-    std::vector<std::vector<int>> stop_token_ids;
-    const auto& metadata = engine_->GetEngineSettings().GetLlmMetadata();
-    if (!metadata.has_value()) {
-      return stop_token_ids;
-    }
-    stop_token_ids.reserve(metadata->stop_tokens_size());
-    for (const auto& stop_token : metadata->stop_tokens()) {
-      if (!stop_token.has_token_ids()) {
-        continue;
-      }
-      stop_token_ids.emplace_back(stop_token.token_ids().ids().begin(),
-                                  stop_token.token_ids().ids().end());
-    }
-    return stop_token_ids;
-  }
-
- private:
-  Engine* engine_;
 };
 
 class Benchmark {
@@ -647,12 +602,6 @@ NB_MODULE(litert_lm_ext, module) {
       },
       nb::arg("log_severity"));
 
-  nb::class_<PyTokenizer>(module, "Tokenizer", nb::dynamic_attr())
-      .def("encode", &PyTokenizer::Encode, nb::arg("text"))
-      .def("decode", &PyTokenizer::Decode, nb::arg("token_ids"))
-      .def_prop_ro("bos_token_id", &PyTokenizer::GetBosTokenId)
-      .def_prop_ro("eos_token_ids", &PyTokenizer::GetEosTokenIds);
-
   nb::class_<Engine>(module, "_Engine", nb::dynamic_attr())
       // Support for Python context managers (with statement).
       // __enter__ returns the object itself.
@@ -741,18 +690,22 @@ NB_MODULE(litert_lm_ext, module) {
           nb::arg("extra_context") = nb::none())
       .def(
           "create_session",
-          [](Engine& self, const nb::handle& options) {
-            return VALUE_OR_THROW(
-                self.CreateSession(ParseSessionOptions(options)));
+          [](Engine& self, bool apply_prompt_template) {
+            auto session_config = SessionConfig::CreateDefault();
+            session_config.SetApplyPromptTemplateInSession(
+                apply_prompt_template);
+            return VALUE_OR_THROW(self.CreateSession(session_config));
           },
-          nb::arg("options") = nb::none(),
+          nb::kw_only(), nb::arg("apply_prompt_template") = true,
           "Creates a new session for this engine.")
-      .def(
-          "get_tokenizer",
-          [](const nb::object& self) {
-            return PyTokenizer(&nb::cast<Engine&>(self));
-          },
-          "Returns the tokenizer associated with this engine.");
+      .def("tokenize", &Tokenize, nb::arg("text"),
+           "Tokenizes text using the engine's tokenizer.")
+      .def("detokenize", &Detokenize, nb::arg("token_ids"),
+           "Decodes token ids using the engine's tokenizer.")
+      .def_prop_ro("bos_token_id", &GetBosTokenId,
+                   "Returns the configured BOS token id, if any.")
+      .def_prop_ro("eos_token_ids", &GetEosTokenIds,
+                   "Returns the configured EOS/stop token sequences.");
 
   nb::class_<Engine::Session>(module, "Session", nb::dynamic_attr(),
                               "Session is responsible for hosting the "
@@ -785,23 +738,10 @@ NB_MODULE(litert_lm_ext, module) {
           "prompt/query into multiple chunks and call this function multiple "
           "times.")
       .def(
-          "run_prefill_token_ids",
-          [](Engine::Session& self, const std::vector<int>& token_ids) {
-            auto token_id_buffer =
-                VALUE_OR_THROW(Tokenizer::TokenIdsToTensorBuffer(token_ids));
-            std::vector<InputData> input_data;
-            input_data.emplace_back(InputText(std::move(token_id_buffer)));
-            STATUS_OR_THROW(self.RunPrefill(input_data));
-          },
-          nb::arg("token_ids"),
-          "Adds already-tokenized input ids to the session prefill state.")
-      .def(
           "run_decode",
-          [](Engine::Session& self, const nb::handle& options) {
-            return ToPyResponses(
-                VALUE_OR_THROW(self.RunDecode(ParseDecodeOptions(options))));
+          [](Engine::Session& self) {
+            return ToPyResponses(VALUE_OR_THROW(self.RunDecode()));
           },
-          nb::arg("options") = nb::none(),
           "Starts the decoding process for the model to predict the response "
           "based on the input prompt/query added after using run_prefill "
           "function.")
@@ -904,25 +844,6 @@ NB_MODULE(litert_lm_ext, module) {
             nb::object tool_event_handler = nb::none();
             if (nb::hasattr(self, "tool_event_handler")) {
               tool_event_handler = self.attr("tool_event_handler");
-            }
-
-            if (tool_map.empty() && tool_event_handler.is_none()) {
-              struct SimpleCallback {
-                std::shared_ptr<MessageIterator> iterator;
-
-                void operator()(absl::StatusOr<Message> message) const {
-                  iterator->Push(std::move(message));
-                }
-              };
-
-              absl::Status status = conversation.SendMessageAsync(
-                  json_message, SimpleCallback{iterator});
-              if (!status.ok()) {
-                std::stringstream error_msg_stream;
-                error_msg_stream << "SendMessageAsync failed: " << status;
-                throw std::runtime_error(error_msg_stream.str());
-              }
-              return iterator;
             }
 
             struct AsyncState {

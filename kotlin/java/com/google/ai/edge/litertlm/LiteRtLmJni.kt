@@ -200,6 +200,7 @@ internal object LiteRtLmJni {
     messageJsonString: String,
     toolsDescriptionJsonString: String,
     channelsJsonString: String?,
+    extraContextJsonString: String,
     enableConversationConstrainedDecoding: Boolean,
   ): Long
 

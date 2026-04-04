@@ -264,12 +264,10 @@ LlmLiteRtMtpDrafter::Create(Environment& env, ModelResources& resources,
       std::move(verifier_output_buffers), num_draft_steps));
 }
 
-absl::StatusOr<std::vector<std::vector<int>>> LlmLiteRtMtpDrafter::Draft(
-    int position, int token_id, std::optional<TensorBuffer> activations,
-    absl::flat_hash_map<absl::string_view, TensorBuffer>&
-        input_kv_cache_buffers,
-    absl::flat_hash_map<absl::string_view, TensorBuffer>&
-        output_kv_cache_buffers) {
+absl::StatusOr<absl::flat_hash_map<absl::string_view, TensorBuffer>>
+LlmLiteRtMtpDrafter::PrepareDrafterInputBuffers(
+    int position, absl::flat_hash_map<absl::string_view, TensorBuffer>&
+                      output_kv_cache_buffers) {
   absl::flat_hash_map<absl::string_view, TensorBuffer>
       mtp_drafter_input_buffers;
   for (const auto& [input_name, input_buffer] : drafter_input_buffers_) {
@@ -295,7 +293,11 @@ absl::StatusOr<std::vector<std::vector<int>>> LlmLiteRtMtpDrafter::Draft(
         mtp_drafter_input_buffers["param_tensor"], position,
         /*update_length=*/1));
   }
+  return mtp_drafter_input_buffers;
+}
 
+absl::StatusOr<absl::flat_hash_map<absl::string_view, TensorBuffer>>
+LlmLiteRtMtpDrafter::PrepareDrafterOutputBuffers() {
   absl::flat_hash_map<absl::string_view, TensorBuffer>
       mtp_drafter_output_buffers;
   for (const auto& [output_name, output_buffer] : drafter_output_buffers_) {
@@ -303,7 +305,15 @@ absl::StatusOr<std::vector<std::vector<int>>> LlmLiteRtMtpDrafter::Draft(
     LITERT_RETURN_IF_ERROR(output_buffer_dup.ClearEvent());
     mtp_drafter_output_buffers[output_name] = std::move(output_buffer_dup);
   }
+  return mtp_drafter_output_buffers;
+}
 
+absl::StatusOr<std::vector<int>> LlmLiteRtMtpDrafter::RunDraftingLoop(
+    int token_id, std::optional<TensorBuffer>& activations,
+    absl::flat_hash_map<absl::string_view, TensorBuffer>&
+        mtp_drafter_input_buffers,
+    absl::flat_hash_map<absl::string_view, TensorBuffer>&
+        mtp_drafter_output_buffers) {
   std::vector<int> drafted_tokens;
   drafted_tokens.reserve(num_draft_steps_);
   LITERT_ASSIGN_OR_RETURN(TensorBuffer id_tensor,
@@ -344,8 +354,14 @@ absl::StatusOr<std::vector<std::vector<int>>> LlmLiteRtMtpDrafter::Draft(
     last_drafted_token_id = id_vector[0];
     activations_ptr = &mtp_drafter_output_buffers["projected_activations"];
   }
+  return drafted_tokens;
+}
 
-  // verify the drafter tokens (i.e., run decode with size num_draft_steps_ + 1)
+absl::StatusOr<absl::flat_hash_map<absl::string_view, TensorBuffer>>
+LlmLiteRtMtpDrafter::PrepareVerifierInputBuffers(
+    int position, int token_id, const std::vector<int>& drafted_tokens,
+    absl::flat_hash_map<absl::string_view, TensorBuffer>&
+        input_kv_cache_buffers) {
   {
     LITERT_ASSIGN_OR_RETURN(
         auto verifier_input_pos_lock_and_addr,
@@ -392,7 +408,13 @@ absl::StatusOr<std::vector<std::vector<int>>> LlmLiteRtMtpDrafter::Draft(
         FillSingleBufferCacheParamTensor(verifier_input_buffers["param_tensor"],
                                          position, num_draft_steps_ + 1));
   }
+  return verifier_input_buffers;
+}
 
+absl::StatusOr<absl::flat_hash_map<absl::string_view, TensorBuffer>>
+LlmLiteRtMtpDrafter::PrepareVerifierOutputBuffers(
+    absl::flat_hash_map<absl::string_view, TensorBuffer>&
+        output_kv_cache_buffers) {
   absl::flat_hash_map<absl::string_view, TensorBuffer> verifier_output_buffers;
   for (const auto& [output_name, output_buffer] : verifier_output_buffers_) {
     LITERT_ASSIGN_OR_RETURN(auto output_buffer_dup, output_buffer.Duplicate());
@@ -404,7 +426,14 @@ absl::StatusOr<std::vector<std::vector<int>>> LlmLiteRtMtpDrafter::Draft(
     LITERT_RETURN_IF_ERROR(output_buffer_dup.ClearEvent());
     verifier_output_buffers[output_name] = std::move(output_buffer_dup);
   }
+  return verifier_output_buffers;
+}
 
+absl::StatusOr<std::vector<int32_t>> LlmLiteRtMtpDrafter::RunVerification(
+    const absl::flat_hash_map<absl::string_view, TensorBuffer>&
+        verifier_input_buffers,
+    absl::flat_hash_map<absl::string_view, TensorBuffer>&
+        verifier_output_buffers) {
   LITERT_RETURN_IF_ERROR(base_model_.Run(
       kVerifySignatureRunner, verifier_input_buffers, verifier_output_buffers));
 
@@ -417,6 +446,36 @@ absl::StatusOr<std::vector<std::vector<int>>> LlmLiteRtMtpDrafter::Draft(
   LITERT_ASSIGN_OR_RETURN(auto verifier_id_vector,
                           CopyFromTensorBuffer<int32_t>(verifier_id_tensor));
   RET_CHECK_EQ(verifier_id_vector.size(), num_draft_steps_ + 1);
+  return verifier_id_vector;
+}
+
+absl::StatusOr<std::vector<std::vector<int>>> LlmLiteRtMtpDrafter::Draft(
+    int position, int token_id, std::optional<TensorBuffer> activations,
+    absl::flat_hash_map<absl::string_view, TensorBuffer>&
+        input_kv_cache_buffers,
+    absl::flat_hash_map<absl::string_view, TensorBuffer>&
+        output_kv_cache_buffers) {
+  ASSIGN_OR_RETURN(
+      auto mtp_drafter_input_buffers,
+      PrepareDrafterInputBuffers(position, output_kv_cache_buffers));
+  ASSIGN_OR_RETURN(auto mtp_drafter_output_buffers,
+                   PrepareDrafterOutputBuffers());
+
+  ASSIGN_OR_RETURN(
+      std::vector<int> drafted_tokens,
+      RunDraftingLoop(token_id, activations, mtp_drafter_input_buffers,
+                      mtp_drafter_output_buffers));
+
+  ASSIGN_OR_RETURN(
+      auto verifier_input_buffers,
+      PrepareVerifierInputBuffers(position, token_id, drafted_tokens,
+                                  input_kv_cache_buffers));
+  ASSIGN_OR_RETURN(auto verifier_output_buffers,
+                   PrepareVerifierOutputBuffers(output_kv_cache_buffers));
+
+  ASSIGN_OR_RETURN(
+      std::vector<int> verifier_id_vector,
+      RunVerification(verifier_input_buffers, verifier_output_buffers));
 
   int num_correct_tokens = 0;
   int bonus_token = -1;

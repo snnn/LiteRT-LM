@@ -150,6 +150,7 @@ class Model:
       preset: str | None = None,
       prompt: str | None = None,
       enable_speculative_decoding: bool | None = None,
+      no_template: bool = False,
   ):
     """Runs the model interactively or with a single prompt.
 
@@ -161,6 +162,8 @@ class Model:
       prompt: A single prompt to run once and exit.
       enable_speculative_decoding: Whether to enable speculative decoding. If
         None, use the model's default.
+      no_template: Interact with the model directly without applying prompt
+        templates or stripping stop tokens.
     """
     if not self.exists():
       click.echo(
@@ -186,24 +189,32 @@ class Model:
         )
 
       with engine_cm as engine:
-        tools = None
-        messages = None
-        extra_context = None
-        if preset:
-          tools, messages, extra_context = load_preset(preset)
-          if tools is None and messages is None and extra_context is None:
-            return
+        if no_template:
+          runner_cm = engine.create_session(apply_prompt_template=False)
+        else:
+          tools = None
+          messages = None
+          extra_context = None
+          if preset:
+            tools, messages, extra_context = load_preset(preset)
+            if tools is None and messages is None and extra_context is None:
+              return
 
-        handler = LoggingToolEventHandler(self) if tools else None
+          handler = LoggingToolEventHandler(self) if tools else None
 
-        with engine.create_conversation(
-            messages=messages,
-            tools=tools,
-            tool_event_handler=handler,
-            extra_context=extra_context,
-        ) as conversation:
+          runner_cm = engine.create_conversation(
+              tools=tools,
+              messages=messages,
+              tool_event_handler=handler,
+              extra_context=extra_context,
+          )
+
+        with runner_cm as runner:
           if prompt:
-            self._execute_prompt(conversation, prompt)
+            if isinstance(runner, litert_lm.AbstractSession):
+              self._execute_raw_prompt(runner, prompt)
+            elif isinstance(runner, litert_lm.AbstractConversation):
+              self._execute_prompt(runner, prompt)
             return
 
           click.echo(
@@ -238,7 +249,16 @@ class Model:
               if not user_prompt:
                 continue
 
-              self._execute_prompt(conversation, user_prompt)
+              if isinstance(runner, litert_lm.AbstractSession):
+                self._execute_raw_prompt(
+                    runner,
+                    user_prompt,
+                )
+              elif isinstance(runner, litert_lm.AbstractConversation):
+                self._execute_prompt(
+                    runner,
+                    user_prompt,
+                )
 
             except EOFError:
               break
@@ -254,7 +274,9 @@ class Model:
       click.echo(click.style("An error occurred", fg="red"))
       traceback.print_exc()
 
-  def _execute_prompt(self, conversation, prompt):
+  def _execute_prompt(
+      self, conversation: litert_lm.AbstractConversation, prompt: str
+  ):
     """Executes a single prompt and prints the result."""
     self.active_channel = None
     stream = conversation.send_message_async(prompt)
@@ -286,6 +308,23 @@ class Model:
       conversation.cancel_process()
       # Empty the iterator queue.
       # This ensures we don't throw away StopIteration.
+      for _ in stream:
+        pass
+      click.echo(click.style("\n[Generation cancelled]", dim=True))
+
+  def _execute_raw_prompt(
+      self, session: litert_lm.AbstractSession, prompt: str
+  ):
+    """Executes a single raw prompt and prints the result."""
+    session.run_prefill([prompt])
+    stream = session.run_decode_async()
+    try:
+      for chunk in stream:
+        if chunk.texts:
+          click.echo(click.style(chunk.texts[0], fg="yellow"), nl=False)
+      click.echo()
+    except KeyboardInterrupt:
+      # Empty the iterator queue.
       for _ in stream:
         pass
       click.echo(click.style("\n[Generation cancelled]", dim=True))

@@ -79,6 +79,7 @@ fun benchmark(
         "[]", // messagesJsonString
         "[]", // toolsDescriptionJsonString
         null, // channelsJsonString
+        "{}", // extraContextJsonString
         false, // enableConversationConstrainedDecoding
       )
 

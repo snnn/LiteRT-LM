@@ -18,6 +18,7 @@ import datetime
 import os
 import shutil
 import subprocess
+import sys
 
 import click
 
@@ -40,6 +41,7 @@ from litert_lm_cli import version
 @click.version_option(version=version.VERSION)
 def cli():
   """CLI tool for LiteRT-LM models."""
+
 
 @cli.command(name="list")
 def list_models():
@@ -431,6 +433,16 @@ def benchmark(
         " instructions."
     ),
 )
+@click.option(
+    "--no-template",
+    is_flag=True,
+    default=False,
+    help=(
+        "Interact with the model directly without applying prompt templates."
+        " That means the input should include all control tokens for the model"
+        " expected."
+    ),
+)
 @common_inference_options
 def run(
     model_reference,
@@ -440,6 +452,7 @@ def run(
     android=False,
     enable_speculative_decoding=None,
     verbose=False,
+    no_template=False,
     from_huggingface_repo=None,
     huggingface_token=None,
 ):
@@ -457,9 +470,28 @@ def run(
     enable_speculative_decoding: Speculative decoding mode (True, False, or None
       for auto).
     verbose: Whether to enable verbose logging.
+    no_template: Interact with the model directly without applying prompt
+      templates or stripping stop tokens.
     from_huggingface_repo: The HuggingFace repository ID.
     huggingface_token: The HuggingFace API token.
   """
+  # If the stdin is not connected to the terminal, e.g., piped or redirected
+  # input, then handle the input as the one-shot prompt.
+  #
+  # # Redirected input:
+  # $ litert-lm run < prompt.txt
+  # $ litert-lm run --prompt="Explain this error log" < error.log
+  #
+  # # Piped input:
+  # $ cat text.txt | litert-lm run --prompt="Summarize the content."
+  if not sys.stdin.isatty():
+    piped_input = sys.stdin.read().strip()
+    if piped_input:
+      prompt = f"{prompt}\n\n{piped_input}" if prompt else piped_input
+    elif not prompt:
+      # If no prompt is provided and it's not a TTY, we can't be interactive.
+      return
+
   if verbose:
     litert_lm.set_min_log_severity(litert_lm.LogSeverity.VERBOSE)
 
@@ -502,6 +534,7 @@ def run(
       backend=backend,
       preset=preset,
       enable_speculative_decoding=enable_speculative_decoding,
+      no_template=no_template,
   )
 
 

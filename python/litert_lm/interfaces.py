@@ -91,6 +91,8 @@ class AbstractEngine(abc.ABC):
         None, use the model's default. If True, enable speculative decoding; an
         error will be thrown if the model does not support it. If False, disable
         it.
+      bos_token_id: The BOS token id for the model if one is configured.
+      eos_token_ids: Stop token sequences configured for the model.
   """
 
   model_path: str
@@ -144,6 +146,24 @@ class AbstractEngine(abc.ABC):
     Returns:
         A new session instance for low-level interaction with the model.
     """
+
+  @property
+  @abc.abstractmethod
+  def bos_token_id(self) -> int | None:
+    """Returns the configured BOS token id for the model, if any."""
+
+  @property
+  @abc.abstractmethod
+  def eos_token_ids(self) -> list[list[int]]:
+    """Returns the configured EOS/stop token sequences for the model."""
+
+  @abc.abstractmethod
+  def tokenize(self, text: str) -> list[int]:
+    """Tokenizes text using the engine's tokenizer."""
+
+  @abc.abstractmethod
+  def detokenize(self, token_ids: list[int]) -> str:
+    """Decodes token ids using the engine's tokenizer."""
 
 
 class AbstractConversation(abc.ABC):
@@ -262,6 +282,8 @@ class AbstractBenchmark(abc.ABC):
         None, use the model's default. If True, enable speculative decoding; an
         error will be thrown if the model does not support it. If False, disable
         it.
+      bos_token_id: The BOS token id for the model if one is configured.
+      eos_token_ids: Stop token sequences configured for the model.
   """
 
   model_path: str

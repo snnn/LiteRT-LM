@@ -72,6 +72,7 @@ cc_binary(
         "@nanobind",
         "@nanobind_json",
         "@litert//litert/c/internal:litert_logging",
+        "//runtime/components:tokenizer",
         "//runtime/conversation",
         "//runtime/conversation:io_types",
         "//runtime/core:engine_impl",
@@ -81,6 +82,7 @@ cc_binary(
         "//runtime/engine:io_types",
         "//runtime/executor:executor_settings_base",
         "//runtime/executor:llm_executor_settings",
+        "//runtime/proto:token_cc_proto",
         "@rules_python//python/cc:current_py_cc_headers",  # buildcleaner: keep
         "@litert//tflite:minimal_logging",
     ],
