@@ -123,36 +123,49 @@ std::optional<Backend> GetSamplerBackend(const LiteRtLmSettings& settings) {
 absl::Status PrintMessage(const Message& message,
                           std::stringstream& captured_output,
                           bool streaming = false) {
-  if (message["content"].is_array()) {
-    for (const auto& content : message["content"]) {
-      if (content["type"] == "text") {
-        captured_output << content["text"].get<std::string>();
-        std::cout << content["text"].get<std::string>();
+  if (message.contains("content")) {
+    if (message["content"].is_array()) {
+      for (const auto& content : message["content"]) {
+        if (content.contains("type") && content["type"] == "text" &&
+            content.contains("text")) {
+          captured_output << content["text"].get<std::string>();
+          std::cout << content["text"].get<std::string>();
+        }
       }
+      if (!streaming) {
+        captured_output << std::endl << std::flush;
+        std::cout << std::endl << std::flush;
+      } else {
+        captured_output << std::flush;
+        std::cout << std::flush;
+      }
+      return absl::OkStatus();
+    } else if (message["content"].is_object() &&
+               message["content"].contains("text") &&
+               message["content"]["text"].is_string()) {
+      if (!streaming) {
+        captured_output << message["content"]["text"].get<std::string>()
+                        << std::endl
+                        << std::flush;
+        std::cout << message["content"]["text"].get<std::string>() << std::endl
+                  << std::flush;
+      } else {
+        captured_output << message["content"]["text"].get<std::string>()
+                        << std::flush;
+        std::cout << message["content"]["text"].get<std::string>()
+                  << std::flush;
+      }
+      return absl::OkStatus();
     }
-    if (!streaming) {
-      captured_output << std::endl << std::flush;
-      std::cout << std::endl << std::flush;
-    } else {
-      captured_output << std::flush;
-      std::cout << std::flush;
-    }
-  } else if (message["content"]["text"].is_string()) {
-    if (!streaming) {
-      captured_output << message["content"]["text"].get<std::string>()
-                      << std::endl
-                      << std::flush;
-      std::cout << message["content"]["text"].get<std::string>() << std::endl
-                << std::flush;
-    } else {
-      captured_output << message["content"]["text"].get<std::string>()
-                      << std::flush;
-      std::cout << message["content"]["text"].get<std::string>() << std::flush;
-    }
-  } else {
-    return absl::InvalidArgumentError("Invalid message: " + message.dump());
   }
-  return absl::OkStatus();
+
+  if (message.contains("tool_calls") ||
+      (message.contains("type") && message["type"] == "function")) {
+    // Gracefully handle function calls without throwing or failing
+    return absl::OkStatus();
+  }
+
+  return absl::InvalidArgumentError("Invalid message: " + message.dump());
 }
 
 absl::AnyInvocable<void(absl::StatusOr<Message>)> CreatePrintMessageCallback(
@@ -421,7 +434,6 @@ void LogMemoryUsage(const LiteRtLmSettings& settings, float peak_mem_mb,
     }
   }
 }
-
 }  // namespace
 
 absl::StatusOr<EngineSettings> CreateEngineSettings(
