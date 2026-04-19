@@ -151,6 +151,8 @@ class Model:
       prompt: str | None = None,
       enable_speculative_decoding: bool | None = None,
       no_template: bool = False,
+      max_num_tokens: int | None = None,
+      filter_channel_content_from_kv_cache: bool = False,
   ):
     """Runs the model interactively or with a single prompt.
 
@@ -164,6 +166,9 @@ class Model:
         None, use the model's default.
       no_template: Interact with the model directly without applying prompt
         templates or stripping stop tokens.
+      max_num_tokens: Maximum number of tokens for the KV cache.
+      filter_channel_content_from_kv_cache: Whether to filter channel content
+        from the KV cache.
     """
     if not self.exists():
       click.echo(
@@ -180,12 +185,17 @@ class Model:
       if is_android:
         if not _HAS_ADB:
           raise ImportError("litert_lm.adb dependencies are not available.")
-        engine_cm = adb_engine.AdbEngine(self.model_path, backend=backend_val)
+        engine_cm = adb_engine.AdbEngine(
+            self.model_path,
+            backend=backend_val,
+            max_num_tokens=max_num_tokens,
+        )
       else:
         engine_cm = litert_lm.Engine(
             self.model_path,
             backend=backend_val,
             enable_speculative_decoding=enable_speculative_decoding,
+            max_num_tokens=max_num_tokens,
         )
 
       with engine_cm as engine:
@@ -207,6 +217,7 @@ class Model:
               messages=messages,
               tool_event_handler=handler,
               extra_context=extra_context,
+              filter_channel_content_from_kv_cache=filter_channel_content_from_kv_cache,
           )
 
         with runner_cm as runner:

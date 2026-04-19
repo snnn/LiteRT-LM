@@ -30,9 +30,9 @@ struct Gemma4DataProcessorConfig {
     kFunctionCallOnly,
   };
   // The string for beginning of image token.
-  std::string boi_token = "<start_of_image>";
+  std::string boi_token = "<|image>";
   // The string for end of image token.
-  std::string eoi_token = "<end_of_image>";
+  std::string eoi_token = "<image|>";
 
   // The patch width that the image preprocessor should patchify the image to.
   int patch_width = 16;
@@ -46,18 +46,22 @@ struct Gemma4DataProcessorConfig {
   // ratio, before patchifying.
   int max_num_patches = 2520;
 
+  // The pooling kernel size that the image preprocessor should use for
+  // patchifying the image.
+  int pooling_kernel_size = 3;
+
   // The string for beginning of audio token.
-  std::string boa_token = "<start_of_audio>";
+  std::string boa_token = "<|audio>";
   // The string for end of audio token.
-  std::string eoa_token = "<end_of_audio>";
+  std::string eoa_token = "<audio|>";
 
   // Signifies the beginning of a tool call.
-  std::string code_fence_start = "<ctrl42>";
+  std::string code_fence_start = "<|tool_call>";
   // Signifies the end of tool call.
-  std::string code_fence_end = "<ctrl43>";
-  std::string open_quote = "<ctrl46>";
-  std::string close_quote = "<ctrl46>";
-  std::string function_response_start = "<ctrl44>";
+  std::string code_fence_end = "<tool_call|>";
+  std::string open_quote = "<|\"|>";
+  std::string close_quote = "<|\"|>";
+  std::string function_response_start = "<|tool_response>";
   // The syntax type of the tool call.
   std::string syntax_type = "fc";
   // Whether to escape the fence strings for regex matching.
@@ -65,7 +69,7 @@ struct Gemma4DataProcessorConfig {
   // An optional regex to match each line of the tool code block.
   std::string tool_code_regex = "";
   // Whether to use the chat template for applying FC format.
-  bool use_template_for_fc_format = false;
+  bool use_template_for_fc_format = true;
   // The constraint mode when constrained decoding is enabled. Default is
   // kTextAndOr.
   ConstraintMode constraint_mode = ConstraintMode::kTextAndOr;

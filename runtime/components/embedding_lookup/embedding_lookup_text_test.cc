@@ -75,7 +75,7 @@ class EmbeddingLookupTextTest : public testing::Test {
     if (!model_.has_value()) {
       return nullptr;
     }
-    auto status = EmbeddingLookupText::Create(&*model_, signature_key, &*env_);
+    auto status = EmbeddingLookupText::Create(*env_, &*model_, signature_key);
     if (!status.ok()) {
       return nullptr;
     }
@@ -722,7 +722,7 @@ TEST_F(EmbeddingLookupTextTest, LookupDecodeVectorSpecifySignatureKey) {
 TEST_F(EmbeddingLookupTextTest, LookupDecodeVectorSpecifySignatureKeyNotFound) {
   EXPECT_TRUE(CreateModelFromFile().ok());
   EXPECT_TRUE(model_.has_value());
-  auto status = EmbeddingLookupText::Create(&*model_, "not_found");
+  auto status = EmbeddingLookupText::Create(*env_, &*model_, "not_found");
   EXPECT_TRUE(!status.ok());
 }
 

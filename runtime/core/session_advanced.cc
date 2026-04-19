@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "absl/base/nullability.h"  // from @com_google_absl
+#include "absl/container/flat_hash_map.h"  // from @com_google_absl
 #include "absl/container/flat_hash_set.h"  // from @com_google_absl
 #include "absl/functional/any_invocable.h"  // from @com_google_absl
 #include "absl/log/absl_log.h"  // from @com_google_absl
@@ -376,11 +377,11 @@ absl::StatusOr<std::unique_ptr<Engine::Session>> SessionAdvanced::Clone() {
   std::unique_ptr<Engine::Session> session;
   {
     absl::MutexLock lock(mutex_);
-    ASSIGN_OR_RETURN(session,
-                     CloneAsyncLocked([&status](
-                                        absl::StatusOr<Responses> responses) {
-                       status = responses.status();
-                     }));
+    ASSIGN_OR_RETURN(
+        session,
+        CloneAsyncLocked([&status](absl::StatusOr<Responses> responses) {
+          status = responses.status();
+        }));
   }
   RETURN_IF_ERROR(WaitUntilDone());
   RETURN_IF_ERROR(status);
@@ -433,5 +434,49 @@ SessionAdvanced::~SessionAdvanced() {
     ABSL_LOG(ERROR) << "Error occurred when releasing session: " << status;
   }
 };
+
+absl::Status SessionAdvanced::SaveCheckpoint(absl::string_view label) {
+  absl::MutexLock lock(mutex_);
+  auto execution_manager_lock = execution_manager_.lock();
+  if (execution_manager_lock == nullptr) {
+    return absl::FailedPreconditionError("Execution manager is not available.");
+  }
+  ASSIGN_OR_RETURN(int current_step,
+                   execution_manager_lock->GetCurrentStep(*session_info_));
+  checkpoint_map_[label] = {current_step, session_state_};
+  return absl::OkStatus();
+}
+
+absl::Status SessionAdvanced::RewindToCheckpoint(absl::string_view label) {
+  absl::MutexLock lock(mutex_);
+
+  // Look up the checkpoint step.
+  auto it = checkpoint_map_.find(label);
+  if (it == checkpoint_map_.end()) {
+    return absl::NotFoundError(absl::StrCat("Checkpoint not found: ", label));
+  }
+  int target_step = it->second.step;
+  session_state_ = it->second.state;
+
+  // Remove all checkpoints after the current step.
+  absl::erase_if(checkpoint_map_, [target_step](const auto& pair) {
+    return pair.second.step > target_step;
+  });
+
+  // Get the execution manager and set the current step.
+  auto execution_manager_lock = execution_manager_.lock();
+  if (execution_manager_lock == nullptr) {
+    return absl::FailedPreconditionError("Execution manager is not available.");
+  }
+  return execution_manager_lock->SetCurrentStep(*session_info_, target_step);
+}
+
+absl::StatusOr<int> SessionAdvanced::GetCurrentStep() const {
+  auto execution_manager_lock = execution_manager_.lock();
+  if (execution_manager_lock == nullptr) {
+    return absl::FailedPreconditionError("Execution manager is not available.");
+  }
+  return execution_manager_lock->GetCurrentStep(*session_info_);
+}
 
 }  // namespace litert::lm

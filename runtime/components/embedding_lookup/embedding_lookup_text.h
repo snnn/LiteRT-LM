@@ -55,9 +55,8 @@ class EmbeddingLookupText : public EmbeddingLookup {
   // the returned instance.  If the model has more than one signature, and
   // signature_key is not provided, the first signature will be used by default.
   static absl::StatusOr<std::unique_ptr<EmbeddingLookupText>> Create(
-      const litert::Model* absl_nonnull model,
-      std::optional<std::string> signature_key = std::nullopt,
-      litert::Environment* absl_nullable env = nullptr);
+      litert::Environment& env, const litert::Model* absl_nonnull model,
+      std::optional<std::string> signature_key = std::nullopt);
 
   // For a given token, looks up the embedding and stores it in the
   // provided vector. The caller is responsible for ensuring that the vector is

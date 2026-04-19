@@ -14,15 +14,15 @@
 
 #include "runtime/conversation/channel_util.h"
 
+#include <cstddef>
+#include <optional>
 #include <string>
-#include <variant>
 #include <vector>
 
 #include "absl/container/flat_hash_map.h"  // from @com_google_absl
 #include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/statusor.h"  // from @com_google_absl
 #include "absl/strings/string_view.h"  // from @com_google_absl
-#include "nlohmann/json_fwd.hpp"  // from @nlohmann_json
 #include "runtime/conversation/io_types.h"
 #include "runtime/engine/io_types.h"
 #include "re2/re2.h"  // from @com_googlesource_code_re2
@@ -35,7 +35,8 @@ constexpr absl::string_view kChannelsKey = "channels";
 
 absl::StatusOr<absl::flat_hash_map<std::string, std::string>>
 ExtractChannelContent(const std::vector<Channel>& channels,
-                      Responses& responses) {
+                      Responses& responses,
+                      const std::optional<std::string>& open_channel_name) {
   absl::flat_hash_map<std::string, std::string> extracted_fields;
   if (responses.GetTexts().empty()) {
     return extracted_fields;
@@ -61,6 +62,15 @@ ExtractChannelContent(const std::vector<Channel>& channels,
       std::string text_inside;
       std::string end_match;
 
+      if (open_channel_name.has_value() &&
+          *open_channel_name == channel.channel_name) {
+        RE2 first_re("(?s)(.*?)(" + escaped_end + "|$)");
+        if (RE2::Consume(&remaining_content, first_re, &text_inside,
+                         &end_match)) {
+          channel_content += text_inside;
+        }
+      }
+
       while (RE2::Consume(&remaining_content, re, &text_before, &text_inside,
                           &end_match)) {
         new_content += text_before;
@@ -81,12 +91,41 @@ ExtractChannelContent(const std::vector<Channel>& channels,
 void InsertChannelContentIntoMessage(
     const absl::flat_hash_map<std::string, std::string>& channel_content,
     Message& assistant_message) {
-  if (std::holds_alternative<nlohmann::ordered_json>(assistant_message)) {
-    auto& json_msg = std::get<nlohmann::ordered_json>(assistant_message);
-    for (const auto& [channel_name, value] : channel_content) {
-      json_msg[std::string(kChannelsKey)][channel_name] = value;
+  for (const auto& [channel_name, value] : channel_content) {
+    assistant_message[std::string(kChannelsKey)][channel_name] = value;
+  }
+}
+
+std::optional<std::string> GetOpenChannelName(
+    absl::string_view text, const std::vector<Channel>& channels) {
+  std::optional<std::string> open_channel_name;
+  size_t max_start_pos = std::string::npos;
+
+  for (const auto& channel : channels) {
+    if (channel.start.empty()) {
+      continue;
+    }
+
+    size_t last_start = text.rfind(channel.start);
+    if (last_start == absl::string_view::npos) {
+      continue;
+    }
+
+    size_t last_end =
+        channel.end.empty() ? absl::string_view::npos : text.rfind(channel.end);
+
+    bool is_open =
+        (last_end == absl::string_view::npos) || (last_start > last_end);
+
+    if (is_open) {
+      if (max_start_pos == std::string::npos || last_start > max_start_pos) {
+        max_start_pos = last_start;
+        open_channel_name = channel.channel_name;
+      }
     }
   }
+
+  return open_channel_name;
 }
 
 }  // namespace litert::lm

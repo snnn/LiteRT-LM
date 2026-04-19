@@ -22,6 +22,9 @@ licenses(["notice"])
 cc_library(
     name = "embedding_lookup",
     hdrs = ["embedding_lookup.h"],
+    visibility = [
+        "//:__subpackages__",
+    ],
     deps = [
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/types:span",

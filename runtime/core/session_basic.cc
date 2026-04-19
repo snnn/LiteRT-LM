@@ -230,7 +230,8 @@ absl::StatusOr<ExecutorInputs> SessionBasic::ProcessAndCombineContents(
       }
       ASSIGN_OR_RETURN(auto embeddings_ptr,
                        single_image_data.GetEmbeddingsPtr());
-      const auto& dimensions = TensorBufferDims(*embeddings_ptr);
+      ASSIGN_OR_RETURN(const auto& dimensions,
+                       TensorBufferDims(*embeddings_ptr));
       // The last two dimensions are [..., image_token_num, model_dimension].
       const int image_token_num = dimensions.at(dimensions.size() - 2);
       combined_token_ids.insert(combined_token_ids.end(), image_token_num,
@@ -346,9 +347,9 @@ absl::Status SessionBasic::RunPrefill(const std::vector<InputData>& contents) {
   if (contents.empty()) {
     return absl::InvalidArgumentError("Input is empty.");
   }
-  ABSL_LOG(INFO) << "RunPrefill: ";
+  ABSL_VLOG(1) << "RunPrefill: ";
   for (const auto& content : contents) {
-    ABSL_LOG(INFO) << content;
+    ABSL_VLOG(1) << content;
   }
 
   if (cancelled_.load()) {
@@ -390,9 +391,9 @@ absl::StatusOr<std::unique_ptr<TaskController>> SessionBasic::RunPrefillAsync(
   if (contents.empty()) {
     return absl::InvalidArgumentError("Input is empty.");
   }
-  ABSL_LOG(INFO) << "RunPrefillAsync: ";
+  ABSL_VLOG(1) << "RunPrefillAsync: ";
   for (const auto& content : contents) {
-    ABSL_LOG(INFO) << content;
+    ABSL_VLOG(1) << content;
   }
 
   if (cancelled_.load()) {

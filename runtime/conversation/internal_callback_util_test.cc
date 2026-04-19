@@ -17,7 +17,6 @@
 #include <memory>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <gmock/gmock.h>
@@ -65,12 +64,10 @@ absl::AnyInvocable<void(absl::StatusOr<Message>)> CreateUserMessageCallback(
       status = message.status();
       return;
     }
-    if (auto json_message = std::get_if<JsonMessage>(&*message)) {
-      if (json_message->is_null()) {
-        done = true;
-      } else {
-        output.push_back(*json_message);
-      }
+    if (message->is_null()) {
+      done = true;
+    } else {
+      output.push_back(*message);
     }
   };
 }
@@ -562,6 +559,49 @@ TEST_F(InternalCallbackTest, InvalidFunctionCall) {
   EXPECT_THAT(status_, StatusIs(absl::StatusCode::kInvalidArgument));
 }
 
+// Verifies that when the system flushes the `complete_message` (e.g. used for
+// capturing history during `async=true` queries), tool call blocks aren't
+// accidentally stripped out as raw channels before the message formatter can
+// parse them into structured `tool_calls`.
+TEST_F(InternalCallbackTest, ToolCallWithCompleteMessageCallback) {
+  auto user_callback = CreateUserMessageCallback(output_, done_, status_);
+  Message final_message;
+  bool final_done = false;
+  auto complete_message_callback = [&](const Message& message) {
+    final_message = message;
+    final_done = true;
+  };
+
+  auto callback = CreateInternalCallback(
+      *model_data_processor_, processor_args_, channels_,
+      std::move(user_callback), /*cancel_callback=*/nullptr,
+      std::move(complete_message_callback));
+
+  callback(Responses(TaskState::kProcessing, {"```tool_code\n"}));
+  callback(Responses(TaskState::kProcessing, {"tool_name"}));
+  callback(Responses(TaskState::kProcessing, {"(x=1)"}));
+  callback(Responses(TaskState::kProcessing, {"\n```"}));
+  callback(Responses(TaskState::kProcessing, {"some text"}));
+  callback(Responses(TaskState::kDone));
+
+  EXPECT_TRUE(final_done);
+  EXPECT_THAT(final_message, testing::Eq(Message::parse(R"json({
+                "role": "assistant",
+                "content": [{"type": "text", "text": "some text"}],
+                "tool_calls": [
+                  {
+                    "type": "function",
+                    "function": {
+                      "name": "tool_name",
+                      "arguments": {
+                        "x": 1
+                      }
+                    }
+                  }
+                ]
+              })json")));
+}
+
 class InternalCallbackChannelTest : public testing::Test {
  protected:
   void SetUp() override {
@@ -659,13 +699,11 @@ TEST_F(InternalCallbackChannelTest, IncompleteChannel) {
 
 TEST_F(InternalCallbackChannelTest, ChannelStreamWithCompleteMessageCallback) {
   auto user_callback = CreateUserMessageCallback(output_, done_, status_);
-  JsonMessage final_message;
+  Message final_message;
   bool final_done = false;
   auto complete_message_callback = [&](const Message& message) {
-    if (auto json_message = std::get_if<JsonMessage>(&message)) {
-      final_message = *json_message;
-      final_done = true;
-    }
+    final_message = message;
+    final_done = true;
   };
 
   auto callback = CreateInternalCallback(
@@ -681,7 +719,7 @@ TEST_F(InternalCallbackChannelTest, ChannelStreamWithCompleteMessageCallback) {
   callback(Responses(TaskState::kDone));
 
   EXPECT_TRUE(final_done);
-  EXPECT_THAT(final_message, testing::Eq(JsonMessage::parse(R"json({
+  EXPECT_THAT(final_message, testing::Eq(Message::parse(R"json({
                 "role": "assistant",
                 "content": [{"type": "text", "text": "Hello World!"}],
                 "channels": {
@@ -693,13 +731,11 @@ TEST_F(InternalCallbackChannelTest, ChannelStreamWithCompleteMessageCallback) {
 TEST_F(InternalCallbackChannelTest,
        ChannelStreamUnclosedWithCompleteMessageCallback) {
   auto user_callback = CreateUserMessageCallback(output_, done_, status_);
-  JsonMessage final_message;
+  Message final_message;
   bool final_done = false;
   auto complete_message_callback = [&](const Message& message) {
-    if (auto json_message = std::get_if<JsonMessage>(&message)) {
-      final_message = *json_message;
-      final_done = true;
-    }
+    final_message = message;
+    final_done = true;
   };
 
   auto callback = CreateInternalCallback(
@@ -714,6 +750,34 @@ TEST_F(InternalCallbackChannelTest,
   EXPECT_TRUE(final_done);
   EXPECT_TRUE(final_message.contains("channels"));
   EXPECT_EQ(final_message["channels"]["thought"], "I am thinking");
+}
+
+TEST_F(InternalCallbackChannelTest, OpenChannelAtStartNoEndTag) {
+  auto user_callback = CreateUserMessageCallback(output_, done_, status_);
+  auto callback = CreateInternalCallback(
+      *model_data_processor_, processor_args_, channels_,
+      std::move(user_callback), /*cancel_callback=*/nullptr,
+      /*complete_message_callback=*/nullptr, /*open_channel_name=*/"thought");
+
+  callback(Responses(TaskState::kProcessing, {"I am thinking"}));
+  callback(Responses(TaskState::kDone));
+
+  EXPECT_THAT(output_, ElementsAre(ChannelMessage("I am thinking", "thought")));
+}
+
+TEST_F(InternalCallbackChannelTest, OpenChannelAtStartWithEndTag) {
+  auto user_callback = CreateUserMessageCallback(output_, done_, status_);
+  auto callback = CreateInternalCallback(
+      *model_data_processor_, processor_args_, channels_,
+      std::move(user_callback), /*cancel_callback=*/nullptr,
+      /*complete_message_callback=*/nullptr, /*open_channel_name=*/"thought");
+
+  callback(Responses(TaskState::kProcessing, {"hmm<channel|>"}));
+  callback(Responses(TaskState::kProcessing, {" world"}));
+  callback(Responses(TaskState::kDone));
+
+  EXPECT_THAT(output_, ElementsAre(ChannelMessage("hmm", "thought"),
+                                   TextMessage(" world")));
 }
 
 }  // namespace

@@ -94,12 +94,15 @@ Ready to get started? Explore our language-specific guides and setup instruction
 #### 🏗️ Build From Source
 
 This [guide](./docs/getting-started/build-and-run.md) shows how you can
-compile LiteRT-LM from source.
+compile LiteRT-LM from source. If you want to build the program from source,
+you should checkout the stable [![Latest
+Release](https://img.shields.io/github/v/release/google-ai-edge/LiteRT-LM)](https://github.com/google-ai-edge/LiteRT-LM/releases/latest) tag.
 
 ---
 
 ## 📦 Releases
 
+-   **v0.10.1**: Deploy [Gemma 4](https://blog.google/innovation-and-ai/technology/developers-tools/gemma-4/) with stellar performance ([blog](https://developers.googleblog.com/bring-state-of-the-art-agentic-skills-to-the-edge-with-gemma-4/)) and introduce [LiteRT-LM CLI](https://ai.google.dev/edge/litert-lm/cli).
 -   **v0.9.0**: Improvements to function calling capabilities, better app performance stability.
 -   **v0.8.0**: Desktop GPU support and Multi-Modality.
 -   **v0.7.0**: NPU acceleration for Gemma models.

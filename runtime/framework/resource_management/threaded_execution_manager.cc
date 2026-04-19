@@ -12,16 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "runtime/framework/resource_management/execution_manager.h"
+#include "runtime/framework/resource_management/threaded_execution_manager.h"
 
 #include <atomic>
 #include <memory>
 #include <optional>
 #include <string>
 #include <tuple>
-#include <type_traits>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include "absl/base/attributes.h"  // from @com_google_absl
@@ -35,6 +33,7 @@
 #include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/statusor.h"  // from @com_google_absl
 #include "absl/strings/str_cat.h"  // from @com_google_absl
+#include "absl/strings/string_view.h"  // from @com_google_absl
 #include "absl/synchronization/mutex.h"  // from @com_google_absl
 #include "absl/time/time.h"  // from @com_google_absl
 #include "litert/cc/litert_environment.h"  // from @litert
@@ -47,19 +46,20 @@
 #include "runtime/components/stop_token_detector.h"
 #include "runtime/components/tokenizer.h"
 #include "runtime/core/tasks.h"
+#include "runtime/engine/engine.h"
 #include "runtime/engine/engine_settings.h"
 #include "runtime/engine/io_types.h"
 #include "runtime/executor/audio_executor.h"
 #include "runtime/executor/audio_executor_settings.h"
-#include "runtime/executor/executor_settings_base.h"
 #include "runtime/executor/llm_executor.h"
 #include "runtime/executor/llm_executor_io_types.h"
 #include "runtime/executor/vision_executor_settings.h"
+#include "runtime/framework/resource_management/execution_manager.h"
 #include "runtime/framework/resource_management/resource_manager.h"
-#include "runtime/proto/token.pb.h"
+#include "runtime/framework/threadpool.h"
 #include "runtime/util/convert_tensor_buffer.h"
 #include "runtime/util/executor_data_util.h"
-#include "runtime/util/status_macros.h"  // IWYU pragma: keep
+#include "runtime/util/status_macros.h"
 #include "runtime/util/tensor_buffer_util.h"
 
 namespace litert::lm {
@@ -72,7 +72,26 @@ namespace litert::lm {
     return;                                                           \
   }
 
-absl::StatusOr<SessionId> ExecutionManager::RegisterNewSession(
+ThreadedExecutionManager::ThreadedExecutionManager(
+    Tokenizer* absl_nonnull tokenizer,
+    std::unique_ptr<ResourceManager> absl_nonnull resource_manager,
+    ::litert::Environment* absl_nullable litert_env)
+    : tokenizer_(std::move(tokenizer)),
+      resource_manager_(std::move(resource_manager)),
+      litert_env_(litert_env) {
+  execution_thread_pool_ =
+      std::make_unique<ThreadPool>(/*name_prefix=*/"execution_thread_pool",
+                                   /*max_num_threads=*/1);
+  callback_thread_pool_ =
+      std::make_unique<ThreadPool>(/*name_prefix=*/"callback_thread_pool",
+                                   /*max_num_threads=*/1);
+}
+
+ThreadedExecutionManager::~ThreadedExecutionManager() {
+  WaitUntilAllDone(Engine::kDefaultTimeout).IgnoreError();
+}
+
+absl::StatusOr<SessionId> ThreadedExecutionManager::RegisterNewSession(
     SessionConfig session_config, std::optional<BenchmarkInfo> benchmark_info) {
   ASSIGN_OR_RETURN(auto context_handler,
                    resource_manager_->CreateContextHandler(session_config));
@@ -121,7 +140,7 @@ absl::StatusOr<SessionId> ExecutionManager::RegisterNewSession(
   return session_id;
 }
 
-absl::Status ExecutionManager::ReleaseSession(SessionId session_id) {
+absl::Status ThreadedExecutionManager::ReleaseSession(SessionId session_id) {
   absl::MutexLock lock(session_and_task_lookup_mutex_);
   if (!session_lookup_.contains(session_id)) {
     return absl::InvalidArgumentError(
@@ -140,7 +159,8 @@ absl::Status ExecutionManager::ReleaseSession(SessionId session_id) {
   return absl::OkStatus();
 }
 
-absl::Status ExecutionManager::CancelAllTasksInSession(SessionId session_id) {
+absl::Status ThreadedExecutionManager::CancelAllTasksInSession(
+    SessionId session_id) {
   absl::MutexLock lock(session_and_task_lookup_mutex_);
   if (!session_lookup_.contains(session_id)) {
     return absl::InvalidArgumentError(
@@ -153,7 +173,7 @@ absl::Status ExecutionManager::CancelAllTasksInSession(SessionId session_id) {
 }
 
 absl::StatusOr<std::shared_ptr<const SessionInfo>>
-ExecutionManager::GetSessionInfo(SessionId session_id) {
+ThreadedExecutionManager::GetSessionInfo(SessionId session_id) {
   absl::MutexLock lock(session_and_task_lookup_mutex_);
   if (!session_lookup_.contains(session_id)) {
     return absl::InvalidArgumentError(
@@ -162,8 +182,8 @@ ExecutionManager::GetSessionInfo(SessionId session_id) {
   return session_lookup_.at(session_id);
 }
 
-absl::StatusOr<BenchmarkInfo*> ExecutionManager::GetMutableBenchmarkInfo(
-    SessionId session_id) {
+absl::StatusOr<BenchmarkInfo*>
+ThreadedExecutionManager::GetMutableBenchmarkInfo(SessionId session_id) {
   absl::MutexLock lock(session_and_task_lookup_mutex_);
   if (!session_lookup_.contains(session_id)) {
     return absl::InvalidArgumentError(
@@ -176,11 +196,11 @@ absl::StatusOr<BenchmarkInfo*> ExecutionManager::GetMutableBenchmarkInfo(
   return &session_lookup_.at(session_id)->benchmark_info.value();
 }
 
-absl::StatusOr<TaskId> ExecutionManager::GetNewTaskId() {
+absl::StatusOr<TaskId> ThreadedExecutionManager::GetNewTaskId() {
   return next_task_id_.fetch_add(1);
 }
 
-absl::Status ExecutionManager::CreateTask(
+absl::Status ThreadedExecutionManager::CreateTask(
     SessionId session_id, TaskId task_id,
     absl::AnyInvocable<void()> absl_nonnull task,
     absl::flat_hash_set<TaskId> dependent_tasks,
@@ -275,7 +295,7 @@ absl::Status ExecutionManager::CreateTask(
   return absl::OkStatus();
 }
 
-absl::Status ExecutionManager::QueueTask(TaskId task_id) {
+absl::Status ThreadedExecutionManager::QueueTask(TaskId task_id) {
   if (!task_lookup_.contains(task_id)) {
     return absl::InvalidArgumentError(
         absl::StrCat("Task ", task_id, " not found in task list."));
@@ -311,7 +331,7 @@ absl::Status ExecutionManager::QueueTask(TaskId task_id) {
 absl::StatusOr<
     std::tuple<std::shared_ptr<SessionInfo>, std::shared_ptr<std::atomic<bool>>,
                absl::AnyInvocable<void(absl::StatusOr<Responses>)>>>
-ExecutionManager::StartTask(TaskId task_id) {
+ThreadedExecutionManager::StartTask(TaskId task_id) {
   absl::MutexLock lock(session_and_task_lookup_mutex_);
   if (!task_lookup_.contains(task_id)) {
     return absl::InvalidArgumentError(
@@ -345,7 +365,7 @@ ExecutionManager::StartTask(TaskId task_id) {
                          std::move(task_lookup_.at(task_id).callback));
 }
 
-absl::Status ExecutionManager::FinishTask(
+absl::Status ThreadedExecutionManager::FinishTask(
     TaskId task_id, absl::StatusOr<Responses> responses,
     absl::AnyInvocable<void(absl::StatusOr<Responses>)> absl_nonnull callback) {
   auto invoke_callback_and_return =
@@ -449,7 +469,7 @@ absl::Status ExecutionManager::FinishTask(
   return absl::OkStatus();
 }
 
-void ExecutionManager::FinishTaskAndLogErrors(
+void ThreadedExecutionManager::FinishTaskAndLogErrors(
     TaskId task_id, absl::StatusOr<Responses> responses,
     absl::AnyInvocable<void(absl::StatusOr<Responses>)> absl_nonnull callback) {
   auto status = FinishTask(task_id, std::move(responses), std::move(callback));
@@ -460,7 +480,7 @@ void ExecutionManager::FinishTaskAndLogErrors(
 }
 
 absl::StatusOr<absl::flat_hash_set<TaskId>>
-ExecutionManager::FollowingWaitingTasks(TaskId task_id) {
+ThreadedExecutionManager::FollowingWaitingTasks(TaskId task_id) {
   absl::flat_hash_set<TaskId> following_waiting_tasks;
   for (TaskId following_task_id : task_lookup_.at(task_id).following_tasks) {
     if (!task_lookup_.contains(following_task_id)) {
@@ -483,8 +503,8 @@ ExecutionManager::FollowingWaitingTasks(TaskId task_id) {
   return following_waiting_tasks;
 }
 
-absl::Status ExecutionManager::UpdateTaskState(TaskId task_id,
-                                               TaskState task_state) {
+absl::Status ThreadedExecutionManager::UpdateTaskState(TaskId task_id,
+                                                       TaskState task_state) {
   if (!task_lookup_.contains(task_id)) {
     return absl::InvalidArgumentError(
         absl::StrCat("Task ", task_id, " not found in task list."));
@@ -509,7 +529,7 @@ absl::Status ExecutionManager::UpdateTaskState(TaskId task_id,
   return absl::OkStatus();
 }
 
-absl::Status ExecutionManager::UpdateAllTasksToState(
+absl::Status ThreadedExecutionManager::UpdateAllTasksToState(
     const absl::flat_hash_set<TaskId>& task_ids, TaskState task_state) {
   for (TaskId task_id : task_ids) {
     task_lookup_.at(task_id).dependent_tasks.clear();
@@ -521,7 +541,8 @@ absl::Status ExecutionManager::UpdateAllTasksToState(
   return absl::OkStatus();
 }
 
-absl::StatusOr<ExecutorInputs> ExecutionManager::ProcessAndCombineContents(
+absl::StatusOr<ExecutorInputs>
+ThreadedExecutionManager::ProcessAndCombineContents(
     const std::vector<InputData>& preprocessed_contents,
     std::optional<BenchmarkInfo>& benchmark_info) {
   std::vector<int> combined_token_ids;
@@ -569,7 +590,8 @@ absl::StatusOr<ExecutorInputs> ExecutionManager::ProcessAndCombineContents(
       }
       ASSIGN_OR_RETURN(auto embeddings_ptr,
                        single_image_data.GetEmbeddingsPtr());
-      const auto& dimensions = TensorBufferDims(*embeddings_ptr);
+      ASSIGN_OR_RETURN(const auto& dimensions,
+                       TensorBufferDims(*embeddings_ptr));
       // The last two dimensions are [..., image_token_num, model_dimension].
       const int image_token_num = dimensions.at(dimensions.size() - 2);
       combined_token_ids.insert(combined_token_ids.end(), image_token_num,
@@ -632,30 +654,29 @@ absl::StatusOr<ExecutorInputs> ExecutionManager::ProcessAndCombineContents(
   return inputs;
 }
 
-absl::StatusOr<std::unique_ptr<ExecutionManager>> ExecutionManager::Create(
+absl::StatusOr<std::unique_ptr<ThreadedExecutionManager>>
+ThreadedExecutionManager::Create(
     Tokenizer* absl_nonnull tokenizer,
     ModelResources* absl_nullable model_resources,
     std::unique_ptr<LlmExecutor> absl_nonnull llm_executor,
     std::unique_ptr<VisionExecutorSettings> absl_nullable
-        vision_executor_settings,
+    vision_executor_settings,
     std::unique_ptr<AudioExecutorSettings> absl_nullable
-        audio_executor_settings,
+    audio_executor_settings,
     ::litert::Environment* absl_nullable litert_env,
     std::unique_ptr<AudioExecutor> absl_nullable audio_executor) {
-  std::unique_ptr<Sampler> sampler;
   ASSIGN_OR_RETURN(
       auto resource_manager,
-      ResourceManager::Create(
-          model_resources, std::move(llm_executor),
-          std::move(vision_executor_settings),
-          std::move(audio_executor_settings), litert_env,
-          std::move(audio_executor)));
-  return absl::WrapUnique(
-      new ExecutionManager(tokenizer, std::move(resource_manager), litert_env));
+      ResourceManager::Create(model_resources, std::move(llm_executor),
+                              std::move(vision_executor_settings),
+                              std::move(audio_executor_settings), litert_env,
+                              std::move(audio_executor)));
+  return absl::WrapUnique(new ThreadedExecutionManager(
+      tokenizer, std::move(resource_manager), litert_env));
 }
 
-absl::Status ExecutionManager::WaitUntilDone(TaskId task_id,
-                                             absl::Duration timeout) {
+absl::Status ThreadedExecutionManager::WaitUntilDone(TaskId task_id,
+                                                     absl::Duration timeout) {
   auto task_done = [this, task_id]() {
     session_and_task_lookup_mutex_.AssertReaderHeld();
     return task_lookup_.contains(task_id) &&
@@ -670,8 +691,8 @@ absl::Status ExecutionManager::WaitUntilDone(TaskId task_id,
                    absl::FormatDuration(timeout), "."));
 }
 
-absl::Status ExecutionManager::WaitUntilSessionDone(SessionId session_id,
-                                                    absl::Duration timeout) {
+absl::Status ThreadedExecutionManager::WaitUntilSessionDone(
+    SessionId session_id, absl::Duration timeout) {
   auto session_done = [this, session_id]() {
     session_and_task_lookup_mutex_.AssertReaderHeld();
     return session_lookup_.contains(session_id) &&
@@ -687,11 +708,12 @@ absl::Status ExecutionManager::WaitUntilSessionDone(SessionId session_id,
                                 absl::FormatDuration(timeout), "."));
 }
 
-absl::Status ExecutionManager::WaitUntilAllDone(absl::Duration timeout) {
+absl::Status ThreadedExecutionManager::WaitUntilAllDone(
+    absl::Duration timeout) {
   return execution_thread_pool_->WaitUntilDone(timeout);
 }
 
-absl::Status ExecutionManager::AddPrefillTask(
+absl::Status ThreadedExecutionManager::AddPrefillTask(
     SessionId session_id, TaskId task_id, std::vector<InputData> inputs,
     absl::flat_hash_set<TaskId> dep_tasks,
     std::shared_ptr<std::atomic<bool>> absl_nonnull cancelled,
@@ -777,7 +799,7 @@ absl::Status ExecutionManager::AddPrefillTask(
                     cancelled, std::move(callback));
 }
 
-absl::Status ExecutionManager::AddDecodeTask(
+absl::Status ThreadedExecutionManager::AddDecodeTask(
     SessionId session_id, TaskId task_id, absl::flat_hash_set<TaskId> dep_tasks,
     Constraint* absl_nullable constraint,
     std::shared_ptr<std::atomic<bool>> absl_nonnull cancelled,
@@ -853,7 +875,7 @@ absl::Status ExecutionManager::AddDecodeTask(
                     cancelled, std::move(callback));
 }
 
-absl::Status ExecutionManager::AddCloneSessionTask(
+absl::Status ThreadedExecutionManager::AddCloneSessionTask(
     SessionId session_id, TaskId task_id, absl::flat_hash_set<TaskId> dep_tasks,
     SessionId cloned_session_id,
     std::shared_ptr<std::atomic<bool>> absl_nonnull cancelled,
@@ -957,7 +979,7 @@ absl::Status ExecutionManager::AddCloneSessionTask(
                     cancelled, std::move(callback));
 }
 
-absl::Status ExecutionManager::AddTextScoringTask(
+absl::Status ThreadedExecutionManager::AddTextScoringTask(
     SessionId session_id, TaskId task_id, absl::flat_hash_set<TaskId> dep_tasks,
     const std::vector<absl::string_view>& target_text, bool store_token_lengths,
     std::shared_ptr<std::atomic<bool>> absl_nonnull cancelled,
@@ -1024,6 +1046,37 @@ absl::Status ExecutionManager::AddTextScoringTask(
 
   return CreateTask(session_id, task_id, std::move(task), std::move(dep_tasks),
                     cancelled, std::move(callback));
+}
+
+absl::StatusOr<int> ThreadedExecutionManager::GetCurrentStep(
+    const SessionInfo& session_info) {
+  ASSIGN_OR_RETURN(auto llm_executor,
+                   resource_manager_->AcquireExecutorWithContextHandler(
+                       session_info.context_handler));
+  return llm_executor->GetCurrentStep();
+}
+
+absl::Status ThreadedExecutionManager::SetCurrentStep(
+    const SessionInfo& session_info, int target_step) {
+  ASSIGN_OR_RETURN(auto llm_executor,
+                   resource_manager_->AcquireExecutorWithContextHandler(
+                       session_info.context_handler));
+  ASSIGN_OR_RETURN(int current_step, llm_executor->GetCurrentStep());
+  if (target_step > current_step) {
+    return absl::InvalidArgumentError(absl::StrCat(
+        "Target step is greater than the current step: ", current_step));
+  }
+  return llm_executor->SetCurrentStep(target_step);
+}
+
+absl::StatusOr<AudioExecutorProperties>
+ThreadedExecutionManager::GetAudioExecutorProperties() const {
+  return resource_manager_->GetAudioExecutorProperties();
+}
+
+absl::StatusOr<VisionExecutorProperties>
+ThreadedExecutionManager::GetVisionExecutorProperties() const {
+  return resource_manager_->GetVisionExecutorProperties();
 }
 
 }  // namespace litert::lm

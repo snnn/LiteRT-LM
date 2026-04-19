@@ -67,6 +67,7 @@ jobs:
         with:
           path: |
             ~/.cache/bazel-macos
+            ~/.cache/bazel-macos-dylib
             ~/.cache/bazel-ios
           key: ${{ steps.cache-keys.outputs.CACHE_KEY }}
           restore-keys: |
@@ -119,6 +120,13 @@ jobs:
       - name: Run pytest
         run: pytest tools/test/ --model-path=${{ env.MODEL_PATH }} --build-system=bazel
 
+      - name: Run bazel build on MacOS with dynamic linking.
+        run: |
+          bazel build --disk_cache=~/.cache/bazel-macos-dylib \
+            --define=litert_link_capi_so=true \
+            --define=resolve_symbols_in_exec=false \
+            //runtime/engine:litert_lm_main
+
       - name: Run bazel build for iOS Simulator.
         run: |
           # The `ios_sim_arm64` config causes bazel to build some mac-only
@@ -153,5 +161,6 @@ jobs:
         with:
           path: |
             ~/.cache/bazel-macos
+            ~/.cache/bazel-macos-dylib
             ~/.cache/bazel-ios
           key: ${{ steps.cache-keys.outputs.CACHE_KEY }}

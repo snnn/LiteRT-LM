@@ -43,27 +43,27 @@ namespace litert::lm {
 
 absl::StatusOr<std::unique_ptr<EmbeddingLookupManager>>
 EmbeddingLookupManager::Create(
+    litert::Environment& env,
     const litert::Model* absl_nonnull text_embedding_model,
     absl::flat_hash_map<int, const litert::Model*>&
         end_of_multi_modal_embedding_models,
-    bool fully_supports_multi_modal, std::optional<std::string> signature_key,
-    litert::Environment* env) {
+    bool fully_supports_multi_modal, std::optional<std::string> signature_key) {
   auto embedding_lookup_manager = std::make_unique<EmbeddingLookupManager>();
   RETURN_IF_ERROR(embedding_lookup_manager->Initialize(
-      text_embedding_model, end_of_multi_modal_embedding_models,
-      fully_supports_multi_modal, signature_key, env));
+      env, text_embedding_model, end_of_multi_modal_embedding_models,
+      fully_supports_multi_modal, signature_key));
   return std::move(embedding_lookup_manager);
 }
 
 absl::StatusOr<std::unique_ptr<EmbeddingLookupManager>>
 EmbeddingLookupManager::Create(
+    litert::Environment& env,
     const litert::Model* absl_nonnull text_embedding_model,
-    bool fully_supports_multi_modal, std::optional<std::string> signature_key,
-    litert::Environment* env) {
+    bool fully_supports_multi_modal, std::optional<std::string> signature_key) {
   absl::flat_hash_map<int, const litert::Model*>
       end_of_multi_modal_embedding_models;
-  return Create(text_embedding_model, end_of_multi_modal_embedding_models,
-                fully_supports_multi_modal, signature_key, env);
+  return Create(env, text_embedding_model, end_of_multi_modal_embedding_models,
+                fully_supports_multi_modal, signature_key);
 }
 
 absl::Status EmbeddingLookupManager::UpdateMultiModalEmbeddings(
@@ -239,11 +239,11 @@ absl::Status EmbeddingLookupManager::LookupPrefill(
 }
 
 absl::Status EmbeddingLookupManager::Initialize(
+    litert::Environment& env,
     const litert::Model* absl_nonnull text_embedding_model,
     absl::flat_hash_map<int, const litert::Model*>&
         end_of_multi_modal_embedding_models,
-    bool fully_supports_multi_modal, std::optional<std::string> signature_key,
-    litert::Environment* env) {
+    bool fully_supports_multi_modal, std::optional<std::string> signature_key) {
   if (!fully_supports_multi_modal &&
       !end_of_multi_modal_embedding_models.empty()) {
     return absl::InvalidArgumentError(
@@ -252,13 +252,13 @@ absl::Status EmbeddingLookupManager::Initialize(
   }
   fully_supports_multi_modal_ = fully_supports_multi_modal;
   ASSIGN_OR_RETURN(text_embedding_lookup_,
-                   EmbeddingLookupText::Create(std::move(text_embedding_model),
-                                               signature_key, env));
+                   EmbeddingLookupText::Create(
+                       env, std::move(text_embedding_model), signature_key));
   for (const auto& [special_token, embedding_model] :
        end_of_multi_modal_embedding_models) {
     ASSIGN_OR_RETURN(auto end_of_multi_modal_embedding_lookup,
                      EndOfMultiModalEmbedding::Create(
-                         std::move(embedding_model), special_token, env));
+                         env, std::move(embedding_model), special_token));
     end_of_multi_modal_embedding_lookups_.push_back(
         std::move(end_of_multi_modal_embedding_lookup));
   }

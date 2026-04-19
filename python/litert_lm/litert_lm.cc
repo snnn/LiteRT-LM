@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <algorithm>
 #include <deque>
 #include <exception>
 #include <map>
@@ -89,7 +90,7 @@ namespace nb = nanobind;
 constexpr int kRecurringToolCallLimit = 25;
 
 // Helper to convert Python dict or str to JSON message.
-nlohmann::json ParseJsonMessage(const nb::handle& message) {
+nlohmann::json ParseMessage(const nb::handle& message) {
   if (nb::isinstance<nb::dict>(message)) {
     return nb::cast<nb::dict>(message);
   }
@@ -114,7 +115,8 @@ nlohmann::json HandleToolCalls(const nlohmann::json& response,
   for (const auto& tool_call : response["tool_calls"]) {
     if (!tool_call.contains("function")) continue;
     std::string name = tool_call["function"]["name"];
-    nlohmann::json arguments = tool_call["function"]["arguments"];
+    nlohmann::json arguments =
+        tool_call["function"].value("arguments", nlohmann::json::object());
 
     if (!tool_event_handler.is_none()) {
       bool allowed = nb::cast<bool>(
@@ -281,17 +283,11 @@ class MessageIterator {
       throw std::runtime_error(message.status().ToString());
     }
 
-    if (!std::holds_alternative<JsonMessage>(*message)) {
-      throw std::runtime_error(
-          "SendMessageAsync did not return a JsonMessage.");
-    }
-
-    auto& json_msg = std::get<JsonMessage>(*message);
-    if (json_msg.empty()) {
+    if (message->empty()) {
       throw nb::stop_iteration();
     }
 
-    return static_cast<nlohmann::json>(json_msg);
+    return nlohmann::json(*message);
   }
 
   bool HasData() const ABSL_EXCLUSIVE_LOCKS_REQUIRED(mutex_) {
@@ -388,6 +384,10 @@ class Benchmark {
     if (!cache_dir_.empty()) {
       settings.GetMutableMainExecutorSettings().SetCacheDir(cache_dir_);
     }
+
+    // TODO - b/499315290: Remove the 1024 once the bug is fixed.
+    settings.GetMutableMainExecutorSettings().SetMaxNumTokens(
+        std::max(prefill_tokens_ + decode_tokens_, 1024));
 
     if (enable_speculative_decoding_.has_value()) {
       AdvancedSettings advanced_settings;
@@ -495,7 +495,7 @@ NB_MODULE(litert_lm_ext, module) {
   module.def(
       "Engine",
       [](std::string_view model_path, const nb::handle& backend,
-         int max_num_tokens, std::string_view cache_dir,
+         std::optional<int> max_num_tokens, std::string_view cache_dir,
          const nb::handle& vision_backend, const nb::handle& audio_backend,
          std::string_view input_prompt_as_hint,
          std::optional<bool> enable_speculative_decoding) {
@@ -513,8 +513,10 @@ NB_MODULE(litert_lm_ext, module) {
         auto settings = VALUE_OR_THROW(EngineSettings::CreateDefault(
             model_assets, main_backend, vision_backend_opt, audio_backend_opt));
 
-        settings.GetMutableMainExecutorSettings().SetMaxNumTokens(
-            max_num_tokens);
+        if (max_num_tokens.has_value()) {
+          settings.GetMutableMainExecutorSettings().SetMaxNumTokens(
+              *max_num_tokens);
+        }
         if (!cache_dir.empty()) {
           settings.GetMutableMainExecutorSettings().SetCacheDir(
               std::string(cache_dir));
@@ -549,7 +551,7 @@ NB_MODULE(litert_lm_ext, module) {
         return py_engine;
       },
       nb::arg("model_path"), nb::arg("backend") = nb::none(),
-      nb::arg("max_num_tokens") = 4096, nb::arg("cache_dir") = "",
+      nb::arg("max_num_tokens") = nb::none(), nb::arg("cache_dir") = "",
       nb::arg("vision_backend") = nb::none(),
       nb::arg("audio_backend") = nb::none(),
       nb::arg("input_prompt_as_hint") = "",
@@ -618,7 +620,8 @@ NB_MODULE(litert_lm_ext, module) {
           "create_conversation",
           [](const nb::object& self, const nb::handle& messages,
              const nb::handle& tools, const nb::handle& tool_event_handler,
-             const nb::handle& extra_context) {
+             bool automatic_tool_calling, const nb::handle& extra_context,
+             bool filter_channel_content_from_kv_cache) {
             Engine& engine = nb::cast<Engine&>(self);
 
             auto builder = ConversationConfig::Builder();
@@ -633,6 +636,10 @@ NB_MODULE(litert_lm_ext, module) {
             }
 
             if (!tools.is_none()) {
+              nb::object tool_class =
+                  nb::module_::import_(
+                      "litert_lm")
+                      .attr("Tool");
               nb::object tool_from_function =
                   nb::module_::import_(
                       "litert_lm."
@@ -641,10 +648,18 @@ NB_MODULE(litert_lm_ext, module) {
 
               nlohmann::json json_tools = nlohmann::json::array();
               for (auto tool : nb::cast<nb::list>(tools)) {
-                auto tool_obj = tool_from_function(tool);
+                nb::object tool_obj = nb::borrow(tool);
+                if (!nb::isinstance(tool_obj, tool_class)) {
+                  tool_obj = tool_from_function(tool_obj);
+                }
                 auto description = tool_obj.attr("get_tool_description")();
-                std::string name =
-                    nb::cast<std::string>(description["function"]["name"]);
+                std::string name;
+                try {
+                  name = nb::cast<std::string>(description["function"]["name"]);
+                } catch (...) {
+                  throw std::invalid_argument(
+                      "Tool description must contain ['function']['name']");
+                }
                 py_tool_map[name.c_str()] = tool_obj;
                 json_tools.push_back(nb::cast<nlohmann::json>(description));
               }
@@ -663,6 +678,9 @@ NB_MODULE(litert_lm_ext, module) {
               builder.SetPreface(json_preface);
             }
 
+            builder.SetFilterChannelContentFromKvCache(
+                filter_channel_content_from_kv_cache);
+
             auto config = VALUE_OR_THROW(builder.Build(engine));
 
             auto conversation =
@@ -671,6 +689,8 @@ NB_MODULE(litert_lm_ext, module) {
             nb::object py_conversation = nb::cast(std::move(conversation));
             py_conversation.attr("_tool_map") = py_tool_map;
             py_conversation.attr("tool_event_handler") = tool_event_handler;
+            py_conversation.attr("automatic_tool_calling") =
+                automatic_tool_calling;
             py_conversation.attr("extra_context") = extra_context;
             if (messages.is_none()) {
               py_conversation.attr("messages") = nb::list();
@@ -687,7 +707,9 @@ NB_MODULE(litert_lm_ext, module) {
           nb::kw_only(), nb::arg("messages") = nb::none(),
           nb::arg("tools") = nb::none(),
           nb::arg("tool_event_handler") = nb::none(),
-          nb::arg("extra_context") = nb::none())
+          nb::arg("automatic_tool_calling") = true,
+          nb::arg("extra_context") = nb::none(),
+          nb::arg("filter_channel_content_from_kv_cache") = false)
       .def(
           "create_session",
           [](Engine& self, bool apply_prompt_template) {
@@ -793,7 +815,7 @@ NB_MODULE(litert_lm_ext, module) {
           "send_message",
           [](nb::object self, const nb::handle& message) {
             Conversation& conversation = nb::cast<Conversation&>(self);
-            nlohmann::json current_message = ParseJsonMessage(message);
+            nlohmann::json current_message = ParseMessage(message);
 
             nb::dict tool_map;
             if (nb::hasattr(self, "_tool_map")) {
@@ -805,24 +827,23 @@ NB_MODULE(litert_lm_ext, module) {
               tool_event_handler = self.attr("tool_event_handler");
             }
 
+            bool automatic_tool_calling = true;
+            if (nb::hasattr(self, "automatic_tool_calling")) {
+              automatic_tool_calling =
+                  nb::cast<bool>(self.attr("automatic_tool_calling"));
+            }
+
             for (int i = 0; i < kRecurringToolCallLimit; ++i) {
               absl::StatusOr<Message> result =
                   conversation.SendMessage(current_message);
-              Message message_variant = VALUE_OR_THROW(std::move(result));
+              Message response = VALUE_OR_THROW(std::move(result));
 
-              if (!std::holds_alternative<JsonMessage>(message_variant)) {
-                throw std::runtime_error(
-                    "SendMessage did not return a JsonMessage.");
-              }
-
-              nlohmann::json response = std::get<JsonMessage>(message_variant);
-
-              if (response.contains("tool_calls") &&
+              if (automatic_tool_calling && response.contains("tool_calls") &&
                   !response["tool_calls"].empty()) {
                 current_message =
                     HandleToolCalls(response, tool_map, tool_event_handler);
               } else {
-                return response;
+                return nlohmann::json(response);
               }
             }
             throw std::runtime_error("Exceeded recurring tool call limit of " +
@@ -833,7 +854,7 @@ NB_MODULE(litert_lm_ext, module) {
           "send_message_async",
           [](nb::object self, const nb::handle& message) {
             Conversation& conversation = nb::cast<Conversation&>(self);
-            nlohmann::json json_message = ParseJsonMessage(message);
+            nlohmann::json json_message = ParseMessage(message);
             auto iterator = std::make_shared<MessageIterator>();
 
             nb::dict tool_map;
@@ -849,8 +870,13 @@ NB_MODULE(litert_lm_ext, module) {
             struct AsyncState {
               int tool_call_count = 0;
               nlohmann::json pending_tool_response = nullptr;
+              bool automatic_tool_calling = true;
             };
             auto state = std::make_shared<AsyncState>();
+            if (nb::hasattr(self, "automatic_tool_calling")) {
+              state->automatic_tool_calling =
+                  nb::cast<bool>(self.attr("automatic_tool_calling"));
+            }
 
             struct Callback {
               nb::object self;
@@ -865,25 +891,18 @@ NB_MODULE(litert_lm_ext, module) {
                   return;
                 }
 
-                if (!std::holds_alternative<JsonMessage>(*message)) {
-                  iterator->Push(absl::InternalError(
-                      "SendMessageAsync did not return a JsonMessage."));
-                  return;
-                }
-
-                auto& json_msg = std::get<JsonMessage>(*message);
-
-                if (json_msg.contains("tool_calls") &&
-                    !json_msg["tool_calls"].empty()) {
+                if (state->automatic_tool_calling &&
+                    message->contains("tool_calls") &&
+                    !(*message)["tool_calls"].empty()) {
                   nb::gil_scoped_acquire acquire;
                   state->pending_tool_response =
-                      HandleToolCalls(json_msg, tool_map, tool_event_handler);
+                      HandleToolCalls(*message, tool_map, tool_event_handler);
                 }
 
-                if (json_msg.contains("content") ||
-                    json_msg.contains("channels")) {
-                  iterator->Push(std::move(message));
-                } else if (json_msg.empty()) {
+                if (message->contains("content") ||
+                    message->contains("channels")) {
+                  iterator->Push(std::move(*message));
+                } else if (message->empty()) {
                   if (state->pending_tool_response != nullptr) {
                     if (state->tool_call_count >= kRecurringToolCallLimit) {
                       iterator->Push(absl::InternalError(

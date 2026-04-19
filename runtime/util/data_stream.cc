@@ -27,36 +27,36 @@
 namespace litert::lm {
 
 SubStream::~SubStream() {
-  if (auto parent = parent_.lock()) {
+  if (parent_) {
     // Note: We ignore errors here as we are in a destructor.
-    (void)parent->Discard(offset_, size_);
+    (void)parent_->Discard(offset_, size_);
   }
 }
 
 absl::Status SubStream::ReadAndDiscard(void* buffer, uint64_t offset,
                                        uint64_t size) {
   RETURN_IF_ERROR(CheckBounds(offset, size));
-  if (auto parent = parent_.lock()) {
-    return parent->ReadAndDiscard(buffer, offset_ + offset, size);
+  if (parent_) {
+    return parent_->ReadAndDiscard(buffer, offset_ + offset, size);
   }
-  return absl::FailedPreconditionError("Parent stream is expired");
+  return absl::FailedPreconditionError("Parent stream is null");
 }
 
 absl::Status SubStream::ReadAndPreserve(void* buffer, uint64_t offset,
                                         uint64_t size) {
   RETURN_IF_ERROR(CheckBounds(offset, size));
-  if (auto parent = parent_.lock()) {
-    return parent->ReadAndPreserve(buffer, offset_ + offset, size);
+  if (parent_) {
+    return parent_->ReadAndPreserve(buffer, offset_ + offset, size);
   }
-  return absl::FailedPreconditionError("Parent stream is expired");
+  return absl::FailedPreconditionError("Parent stream is null");
 }
 
 absl::Status SubStream::Discard(uint64_t offset, uint64_t size) {
   RETURN_IF_ERROR(CheckBounds(offset, size));
-  if (auto parent = parent_.lock()) {
-    return parent->Discard(offset_ + offset, size);
+  if (parent_) {
+    return parent_->Discard(offset_ + offset, size);
   }
-  return absl::FailedPreconditionError("Parent stream is expired");
+  return absl::FailedPreconditionError("Parent stream is null");
 }
 
 absl::Status SubStream::CheckBounds(uint64_t offset, uint64_t size) const {
@@ -69,7 +69,7 @@ absl::Status SubStream::CheckBounds(uint64_t offset, uint64_t size) const {
   return absl::OkStatus();
 }
 
-absl::StatusOr<std::shared_ptr<DataStream>> SubStream::OpenSubStream(
+absl::StatusOr<std::unique_ptr<DataStream>> SubStream::OpenSubStream(
     uint64_t offset, uint64_t size) {
   // Check if the requested substream fits within this SubStream's bounds.
   // Note that the parent DataStream::OpenSubStream method doesn't do this for
@@ -80,7 +80,7 @@ absl::StatusOr<std::shared_ptr<DataStream>> SubStream::OpenSubStream(
   return DataStream::OpenSubStream(offset, size);
 }
 
-absl::StatusOr<std::shared_ptr<DataStream>> DataStream::OpenSubStream(
+absl::StatusOr<std::unique_ptr<DataStream>> DataStream::OpenSubStream(
     uint64_t offset, uint64_t size) {
   for (const auto& region : locked_regions_) {
     // Check for overlap: Is [offset, offset + size) overlapping with
@@ -94,7 +94,7 @@ absl::StatusOr<std::shared_ptr<DataStream>> DataStream::OpenSubStream(
     }
   }
   locked_regions_.emplace_back(offset, size);
-  return std::make_shared<SubStream>(shared_from_this(), offset, size);
+  return std::make_unique<SubStream>(this, offset, size);
 }
 
 }  // namespace litert::lm

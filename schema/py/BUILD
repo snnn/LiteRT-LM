@@ -73,6 +73,7 @@ py_test(
     data = ["//schema:testdata"],
     main = "litertlm_peek_test.py",
     deps = [
+        ":litertlm_builder",
         ":litertlm_peek",
         "@absl_py//absl/testing:absltest",
     ],

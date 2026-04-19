@@ -182,6 +182,15 @@ LITERT_LM_C_API_EXPORT
 void litert_lm_engine_settings_set_max_num_tokens(
     LiteRtLmEngineSettings* settings, int max_num_tokens);
 
+// Sets whether the engine should load different sections of the litertlm file
+// in parallel. Defaults to true.
+//
+// @param settings The engine settings.
+// @param parallel_file_section_loading Whether to load in parallel.
+LITERT_LM_C_API_EXPORT
+void litert_lm_engine_settings_set_parallel_file_section_loading(
+    LiteRtLmEngineSettings* settings, bool parallel_file_section_loading);
+
 // Sets the cache directory for the engine.
 //
 // @param settings The engine settings.

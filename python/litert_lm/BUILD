@@ -30,6 +30,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "tools",
     srcs = ["tools.py"],
+    deps = [":interfaces"],
 )
 
 cc_binary(
@@ -121,6 +122,7 @@ py_test(
 py_test(
     name = "tool_test",
     srcs = ["tool_test.py"],
+    data = ["//runtime/testdata"],
     tags = ["nowindows"],
     deps = [
         ":litert_lm",

@@ -36,6 +36,8 @@ internal object LiteRtLmJni {
    *   `litert::lm::Backend`.
    * @param maxNumTokens The maximum number of tokens to be processed by the engine. When
    *   non-positive, use the engine's default.
+   * @param maxNumImages The maximum number of images the model can handle. When non-positive, use
+   *   the engine's default.
    * @param enableBenchmark Whether to enable benchmark mode or not.
    * @param cacheDir The directory for cache files.
    * @param enableBenchmark Whether to enable benchmark or not.
@@ -53,9 +55,10 @@ internal object LiteRtLmJni {
     visionBackend: String,
     audioBackend: String,
     maxNumTokens: Int,
+    maxNumImages: Int,
     cacheDir: String,
     enableBenchmark: Boolean,
-    enableSpeculativeDecoding: Boolean,
+    enableSpeculativeDecoding: Boolean?,
     mainNpuNativeLibraryDir: String,
     visionNpuNativeLibraryDir: String,
     audioNpuNativeLibraryDir: String,
@@ -192,6 +195,7 @@ internal object LiteRtLmJni {
    *   default from the model or engine. If empty, channels will be disabled.
    * @param enableConversationConstrainedDecoding Whether to enable conversation constrained
    *   decoding.
+   * @param filterChannelContentFromKvCache Whether to filter channel content from the KV cache.
    * @return A pointer to the native conversation instance.
    */
   external fun nativeCreateConversation(
@@ -202,6 +206,7 @@ internal object LiteRtLmJni {
     channelsJsonString: String?,
     extraContextJsonString: String,
     enableConversationConstrainedDecoding: Boolean,
+    filterChannelContentFromKvCache: Boolean,
   ): Long
 
   /**

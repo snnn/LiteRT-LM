@@ -16,11 +16,14 @@
 #define THIRD_PARTY_ODML_LITERT_LM_RUNTIME_CORE_SESSION_ADVANCED_H_
 
 #include <atomic>
+#include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
-#include "absl/base/thread_annotations.h"  // from @com_google_absl
 #include "absl/base/nullability.h"  // from @com_google_absl
+#include "absl/base/thread_annotations.h"  // from @com_google_absl
+#include "absl/container/flat_hash_map.h"  // from @com_google_absl
 #include "absl/container/flat_hash_set.h"  // from @com_google_absl
 #include "absl/functional/any_invocable.h"  // from @com_google_absl
 #include "absl/log/absl_log.h"  // from @com_google_absl
@@ -143,6 +146,19 @@ class SessionAdvanced : public Engine::Session {
 
   absl::StatusOr<BenchmarkInfo*> GetMutableBenchmarkInfo() override;
 
+  // Save the current step with the name `label`. You can later rewind to this
+  // checkpoint using `RewindToCheckpoint(label)`. If the checkpoint name
+  // already exists, the step number will be overwritten. Returns the saved
+  // step number.
+  absl::Status SaveCheckpoint(absl::string_view label) override;
+
+  // Rewinds the session to the given checkpoint and then returns the current
+  // step.
+  absl::Status RewindToCheckpoint(absl::string_view label) override;
+
+  // Get the current step of the session.
+  absl::StatusOr<int> GetCurrentStep() const override;
+
   // TODO(b/450903294): Add rollback history support for Session and
   // Conversation.
   void CancelProcess() override {
@@ -230,6 +246,15 @@ class SessionAdvanced : public Engine::Session {
 
   // The last task IDs that might be executing in the session.
   absl::flat_hash_set<TaskId> last_task_ids_ ABSL_GUARDED_BY(mutex_) = {};
+
+  struct CheckpointInfo {
+    int step;
+    SessionState state;
+  };
+
+  // The checkpoint map for the session.
+  absl::flat_hash_map<std::string, CheckpointInfo> checkpoint_map_
+      ABSL_GUARDED_BY(mutex_) = {};
 
   // Mutex for protecting the session state and last task IDs.
   absl::Mutex mutex_;

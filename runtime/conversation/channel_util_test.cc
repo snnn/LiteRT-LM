@@ -120,17 +120,119 @@ TEST(ExtractChannelTextTest, MissingEndDelimiter) {
   EXPECT_THAT(responses.GetTexts()[0], Eq("Hello "));
 }
 
-TEST(InsertChannelContentIntoMessageTest, JsonMessageInsertion) {
-  JsonMessage json_msg = {{"role", "assistant"}, {"content", "Hello!"}};
-  Message message(json_msg);
+TEST(InsertChannelContentIntoMessageTest, MessageInsertion) {
+  Message message = {{"role", "assistant"}, {"content", "Hello!"}};
   absl::flat_hash_map<std::string, std::string> channel_content = {
       {"thought", "hmm"}};
 
   InsertChannelContentIntoMessage(channel_content, message);
 
-  auto* result_json = std::get_if<JsonMessage>(&message);
-  ASSERT_NE(result_json, nullptr);
-  EXPECT_THAT((*result_json)["channels"]["thought"], Eq("hmm"));
+  EXPECT_THAT(message["channels"]["thought"], Eq("hmm"));
+}
+
+TEST(ExtractChannelContentTest, OpenChannelAtStartNoEndTag) {
+  Responses responses(TaskState::kProcessing, {"hmm"});
+  std::vector<Channel> channels = {{"thought", "<think>", "</think>"}};
+
+  auto channel_content = ExtractChannelContent(channels, responses,
+                                               /*open_channel_name=*/"thought");
+  ASSERT_OK(channel_content);
+  EXPECT_THAT(*channel_content,
+              UnorderedElementsAre(
+                  std::pair<const std::string, std::string>("thought", "hmm")));
+  EXPECT_THAT(responses.GetTexts()[0], IsEmpty());
+}
+
+TEST(ExtractChannelContentTest, OpenChannelAtStartWithEndTag) {
+  Responses responses(TaskState::kProcessing, {"hmm</think> World!"});
+  std::vector<Channel> channels = {{"thought", "<think>", "</think>"}};
+
+  auto channel_content = ExtractChannelContent(channels, responses,
+                                               /*open_channel_name=*/"thought");
+  ASSERT_OK(channel_content);
+  EXPECT_THAT(*channel_content,
+              UnorderedElementsAre(
+                  std::pair<const std::string, std::string>("thought", "hmm")));
+  EXPECT_THAT(responses.GetTexts()[0], Eq(" World!"));
+}
+
+TEST(ExtractChannelContentTest, OpenChannelAtStartFollowedByAnotherChannel) {
+  Responses responses(TaskState::kProcessing,
+                      {"hmm</think> World <joke>lol</joke>"});
+  std::vector<Channel> channels = {
+      {"thought", "<think>", "</think>"},
+      {"joke", "<joke>", "</joke>"},
+  };
+
+  auto channel_content = ExtractChannelContent(channels, responses,
+                                               /*open_channel_name=*/"thought");
+  ASSERT_OK(channel_content);
+  EXPECT_THAT(*channel_content,
+              UnorderedElementsAre(
+                  std::pair<const std::string, std::string>("thought", "hmm"),
+                  std::pair<const std::string, std::string>("joke", "lol")));
+  EXPECT_THAT(responses.GetTexts()[0], Eq(" World "));
+}
+
+TEST(GetOpenChannelNameTest, NoChannels) {
+  std::vector<Channel> channels;
+  EXPECT_FALSE(GetOpenChannelName("Hello World!", channels).has_value());
+}
+
+TEST(GetOpenChannelNameTest, NoOpenChannel) {
+  std::vector<Channel> channels = {{"thought", "<think>", "</think>"}};
+  EXPECT_FALSE(GetOpenChannelName("Hello World!", channels).has_value());
+  EXPECT_FALSE(GetOpenChannelName("Hello <think>hmm</think> World!", channels)
+                   .has_value());
+}
+
+TEST(GetOpenChannelNameTest, OneOpenChannel) {
+  std::vector<Channel> channels = {{"thought", "<think>", "</think>"}};
+  auto open_channel = GetOpenChannelName("Hello <think>hmm", channels);
+  ASSERT_TRUE(open_channel.has_value());
+  EXPECT_THAT(*open_channel, Eq("thought"));
+}
+
+TEST(GetOpenChannelNameTest, MultipleOpenChannelsReturnsMostRecent) {
+  std::vector<Channel> channels = {
+      {"thought", "<think>", "</think>"},
+      {"joke", "<joke>", "</joke>"},
+  };
+
+  // Both are open, but <joke> is more recent.
+  auto open_channel =
+      GetOpenChannelName("Hello <think>hmm <joke>lol", channels);
+  ASSERT_TRUE(open_channel.has_value());
+  EXPECT_THAT(*open_channel, Eq("joke"));
+
+  // Both are open, but <think> is more recent.
+  open_channel = GetOpenChannelName("Hello <joke>lol <think>hmm", channels);
+  ASSERT_TRUE(open_channel.has_value());
+  EXPECT_THAT(*open_channel, Eq("thought"));
+}
+
+TEST(GetOpenChannelNameTest, OpenChannelAfterClosedChannel) {
+  std::vector<Channel> channels = {
+      {"thought", "<think>", "</think>"},
+      {"joke", "<joke>", "</joke>"},
+  };
+
+  auto open_channel =
+      GetOpenChannelName("Hello <think>hmm</think> <joke>lol", channels);
+  ASSERT_TRUE(open_channel.has_value());
+  EXPECT_THAT(*open_channel, Eq("joke"));
+}
+
+TEST(GetOpenChannelNameTest, ClosedChannelAfterOpenChannel) {
+  std::vector<Channel> channels = {
+      {"thought", "<think>", "</think>"},
+      {"joke", "<joke>", "</joke>"},
+  };
+
+  auto open_channel =
+      GetOpenChannelName("Hello <think>hmm <joke>lol</joke>", channels);
+  ASSERT_TRUE(open_channel.has_value());
+  EXPECT_THAT(*open_channel, Eq("thought"));
 }
 
 }  // namespace

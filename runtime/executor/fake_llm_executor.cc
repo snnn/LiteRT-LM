@@ -155,6 +155,7 @@ absl::Status FakeLlmExecutor::Prefill(const ExecutorInputs& inputs) {
   processed_tokens_.AddProcessedTokens(prefill_tokens_set_[prefill_times_]);
   prefill_times_++;
   current_step_ += text_token_ids_span->size();
+  prefill_tokens_total_ += text_token_ids_span->size();
   return absl::OkStatus();
 }
 
@@ -312,6 +313,7 @@ absl::Status FakeLlmExecutor::Reset() {
   prefill_times_ = 0;
   decode_times_ = 0;
   current_step_ = 0;
+  prefill_tokens_total_ = 0;
   last_op_ = LastOp::kNone;
   return absl::OkStatus();
 }

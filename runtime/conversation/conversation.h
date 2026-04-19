@@ -299,29 +299,29 @@ struct OptionalArgs {
   // stage.
   //
   // ASSERT_OK(conversation->SendMessage(
-  //   JsonMessage{{"role", "user"}, {"content", "Hello world!"}},
+  //   Message{{"role", "user"}, {"content", "Hello world!"}},
   //   {.has_pending_message = true}));
   //
   // ASSERT_OK(conversation->SendMessage(
-  //   JsonMessage{{"role", "user"}, {"content", " This is a long message."}},
+  //   Message{{"role", "user"}, {"content", " This is a long message."}},
   //   {.has_pending_message = true}));
   //
   // By sending a message with has_pending_message set to false, the decode
   // stage will be triggered, and the decode result will be returned.
   //
   // ASSERT_OK(conversation->SendMessage(
-  //   JsonMessage{{"role", "user"}, {"content", " This is the last message."}},
+  //   Message{{"role", "user"}, {"content", " This is the last message."}},
   //   {.has_pending_message = false}));
   //
   // Alternatively, send an empty message with has_pending_message set to false
   // to only trigger the decode stage.
   //
   // ASSERT_OK(conversation->SendMessage(
-  //   JsonMessage{{"role", "user"}, {"content", " This is the last message."}},
+  //   Message{{"role", "user"}, {"content", " This is the last message."}},
   //   {.has_pending_message = true}));
   //
   // ASSERT_OK(conversation->SendMessage(
-  //   JsonMessage{{"role", "user"}, {"content", ""}},
+  //   Message{{"role", "user"}, {"content", ""}},
   //   {.has_pending_message = false}));
   bool has_pending_message = false;
 
@@ -373,14 +373,14 @@ struct OptionalArgs {
 //
 //   // Send a message to the LLM and returns the complete message.
 //   ASSIGN_OR_RETURN(const Message message,
-//                    conversation->SendMessage(JsonMessage{
+//                    conversation->SendMessage(Message{
 //                        {"role", "user"}, {"content", "Hello world!"}}));
 //
 //   // Send a message to the LLM and process the asynchronous message results
 //   // via the user_callback. The user_callback is a user-defined callback
 //   // function that handles the message results.
 //   EXPECT_OK(conversation->SendMessageAsync(
-//       JsonMessage{{"role", "user"}, {"content", "Hello world!"}},
+//       Message{{"role", "user"}, {"content", "Hello world!"}},
 //       [](absl::StatusOr<Message> message) {
 //         // Handle the message results.
 //         if (message.ok()) {
@@ -543,10 +543,10 @@ class Conversation {
       const Message& message, const OptionalArgs& optional_args);
 
   absl::StatusOr<std::string> GetSingleTurnTextFromFullHistory(
-      const JsonMessage& json_message, const OptionalArgs& optional_args);
+      const Message& message, const OptionalArgs& optional_args);
 
   absl::StatusOr<std::string> GetSingleTurnTextFromSingleTurnTemplate(
-      const JsonMessage& json_message, const OptionalArgs& optional_args);
+      const Message& message, const OptionalArgs& optional_args);
 
   absl::StatusOr<DecodeConfig> CreateDecodeConfig(
       std::optional<ConstraintArg> decoding_constraint = std::nullopt,
@@ -572,10 +572,13 @@ class Conversation {
   // - `old_messages`: The old messages that have already been prefilled.
   // - `new_messages`: The new messages to be prefilled.
   // - `optional_args`: The optional arguments for template rendering.
+  // - `include_preface`: Include the preface in the returned text when
+  //   `old_messages` is empty.
   absl::StatusOr<std::string> GetPrefillTextForMessages(
       absl::Span<const Message> old_messages,
       absl::Span<const Message> new_messages,
-      const OptionalArgs& optional_args = OptionalArgs());
+      const OptionalArgs& optional_args = OptionalArgs(),
+      bool include_preface = true);
 
   // Returns the input data vector for the given messages.
   //
@@ -586,14 +589,18 @@ class Conversation {
   // - `old_messages`: The old messages that have already been prefilled.
   // - `new_messages`: The new messages to be prefilled.
   // - `optional_args`: The optional arguments for template rendering.
+  // - `include_preface`: Include the preface in the returned input data vector
+  //   when `old_messages` is empty.
   absl::StatusOr<std::vector<InputData>> GetInputDataVectorForMessages(
       absl::Span<const Message> old_messages,
       absl::Span<const Message> new_messages,
-      const OptionalArgs& optional_args = OptionalArgs());
+      const OptionalArgs& optional_args = OptionalArgs(),
+      bool include_preface = true);
 
   // Rewinds the session to the checkpoint after the most recent channel content
   // and return the input data vector for all messages from that point onward.
-  absl::StatusOr<std::vector<InputData>> RewindAndGetInputDataVector();
+  absl::StatusOr<std::vector<InputData>> RewindAndGetInputDataVector(
+      const OptionalArgs& optional_args = OptionalArgs());
 
   // Keep a reference to the creator engine to enable access to the shared
   // resources that might be required for features like cloning.
@@ -625,19 +632,12 @@ class Conversation {
   // memory corruption and null-pointer deference issues.
   std::unique_ptr<Engine::Session> session_;
 
-  // Whether checkpointing and rewinding are supported by the session.
-
-  // Assumed to be true initially but on the first error from SaveCheckpoint,
-  // will be set to false.  Rewinding is supported by SessionBasic but not by
-  // SessionAdvanced.
-  //
-  //  TODO(b/494425377): Support rewinding in SessionAdvanced and remove
-  //  session_checkpoint_supported_.
-  bool session_checkpoint_supported_ = true;
-
   // The index of the message you have to rewind to in order to remove channel
   // content from the KV cache. nullopt means no rewind is needed.
   std::optional<int> checkpoint_message_index_ = std::nullopt;
+
+  // Whether there is channel content present since the last user message.
+  bool channel_content_since_last_user_message_ = false;
 };
 }  // namespace litert::lm
 

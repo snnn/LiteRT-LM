@@ -93,6 +93,11 @@ class FakeLlmExecutor : public LlmExecutor {
 
   absl::Status SetCurrentStep(int current_step) override {
     current_step_ = current_step;
+    if (current_step >= prefill_tokens_total_) {
+      decode_times_ = current_step - prefill_tokens_total_;
+    } else {
+      decode_times_ = 0;
+    }
     return absl::OkStatus();
   }
 
@@ -132,6 +137,9 @@ class FakeLlmExecutor : public LlmExecutor {
 
   // The current step of the executor.
   int current_step_;
+
+  // The total number of prefill tokens processed.
+  int prefill_tokens_total_ = 0;
 
   // The processed tokens of the executor.
   ProcessedTokens processed_tokens_;

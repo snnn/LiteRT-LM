@@ -61,7 +61,6 @@ class ToolEventHandler(abc.ABC):
         The tool response that will be sent to the model.
     """
 
-
 @dataclasses.dataclass
 class SessionOptions:
   """Options applied when a new low-level session is created."""
@@ -76,6 +75,25 @@ class DecodeOptions:
   max_output_tokens: int | None = None
 
 
+class Tool(abc.ABC):
+  """A tool that can be executed."""
+
+  @abc.abstractmethod
+  def get_tool_description(self) -> dict[str, Any]:
+    """Returns a JSON representing the tool in OpenAPI schema."""
+
+  @abc.abstractmethod
+  def execute(self, param: collections.abc.Mapping[str, Any]) -> Any:
+    """Executes the underlying function and returns the result.
+
+    Args:
+        param: A dictionary containing the parameters for the tool.
+
+    Returns:
+        The result of the tool execution.
+    """
+
+
 @dataclasses.dataclass(kw_only=True)
 class AbstractEngine(abc.ABC):
   """Abstract base class for LiteRT-LM engines.
@@ -83,7 +101,8 @@ class AbstractEngine(abc.ABC):
   Attributes:
       model_path: Path to the model file.
       backend: The hardware backend used for inference.
-      max_num_tokens: Maximum number of tokens for the KV cache.
+      max_num_tokens: Maximum number of tokens for the KV cache. If None, use
+        the engine/model's default.
       cache_dir: Directory for caching compiled model artifacts.
       vision_backend: The hardware backend used for vision encoding.
       audio_backend: The hardware backend used for audio encoding.
@@ -97,7 +116,7 @@ class AbstractEngine(abc.ABC):
 
   model_path: str
   backend: Backend
-  max_num_tokens: int = 4096
+  max_num_tokens: int | None = None
   cache_dir: str = ""
   vision_backend: Backend | None = None
   audio_backend: Backend | None = None
@@ -119,19 +138,28 @@ class AbstractEngine(abc.ABC):
           collections.abc.Sequence[collections.abc.Mapping[str, Any]] | None
       ) = None,
       tools: (
-          collections.abc.Sequence[collections.abc.Callable[..., Any]] | None
+          collections.abc.Sequence[collections.abc.Callable[..., Any] | Tool]
+          | None
       ) = None,
       tool_event_handler: ToolEventHandler | None = None,
+      automatic_tool_calling: bool = True,
       extra_context: collections.abc.Mapping[str, Any] | None = None,
+      filter_channel_content_from_kv_cache: bool = False,
   ) -> AbstractConversation:
     """Creates a new conversation for this engine.
 
     Args:
         messages: A sequence of messages for the conversation preface. Each
           message is a mapping that should contain 'role' and 'content' keys.
-        tools: A list of Python functions to be used as tools.
+        tools: A list of Python functions or Tool instances to be used as tools.
         tool_event_handler: A handler for tool call and tool response events.
+        automatic_tool_calling: Whether to automatically call tools. If False,
+          tool calls will be returned to the user to execute.
         extra_context: Extra context for the conversation.
+        filter_channel_content_from_kv_cache: Whether to filter channel content
+          from the KV cache. This is useful when the model responds with
+          "channel" content, e.g. thinking/reasoning tokens, that should not be
+          persisted in the KV cache.
     """
 
   @abc.abstractmethod
@@ -171,8 +199,9 @@ class AbstractConversation(abc.ABC):
 
   Attributes:
       messages: A sequence of messages for the conversation preface.
-      tools: A list of Python functions to be used as tools.
+      tools: A list of Python functions or Tool instances to be used as tools.
       tool_event_handler: A handler for tool call and tool response events.
+      automatic_tool_calling: Whether to automatically call tools.
       extra_context: Extra context for the chat template.
   """
 
@@ -183,9 +212,11 @@ class AbstractConversation(abc.ABC):
           collections.abc.Sequence[collections.abc.Mapping[str, Any]] | None
       ) = None,
       tools: (
-          collections.abc.Sequence[collections.abc.Callable[..., Any]] | None
+          collections.abc.Sequence[collections.abc.Callable[..., Any] | Tool]
+          | None
       ) = None,
       tool_event_handler: ToolEventHandler | None = None,
+      automatic_tool_calling: bool = True,
       extra_context: collections.abc.Mapping[str, Any] | None = None,
   ):
     """Initializes the instance.
@@ -193,13 +224,16 @@ class AbstractConversation(abc.ABC):
     Args:
         messages: A sequence of messages for the conversation preface. Each
           message is a mapping that should contain 'role' and 'content' keys.
-        tools: A list of Python functions to be used as tools.
+        tools: A list of Python functions or Tool instances to be used as tools.
         tool_event_handler: A handler for tool call and tool response events.
+        automatic_tool_calling: Whether to automatically call tools. If False,
+          tool calls will be returned to the user to execute.
         extra_context: Extra context for the chat template.
     """
     self.messages = messages or []
     self.tools = tools or []
     self.tool_event_handler = tool_event_handler
+    self.automatic_tool_calling = automatic_tool_calling
     self.extra_context = extra_context or {}
 
   def __enter__(self) -> AbstractConversation:

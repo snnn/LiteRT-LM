@@ -17,10 +17,12 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>  //NOLINT
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/base/nullability.h"  // from @com_google_absl
@@ -94,6 +96,74 @@ absl::Status SetCpuCacheOptions(
   }
   return absl::OkStatus();
 }
+
+absl::Status SetGpuOptions(
+    const std::string& weight_cache_path,
+    std::shared_ptr<litert::lm::ScopedFile> scoped_cache_file,
+    const absl::StatusOr<
+        std::variant<std::string, std::shared_ptr<litert::lm::ScopedFile>>>&
+        program_cache_file,
+    const VisionExecutorSettings& executor_settings,
+    absl::string_view cache_key, absl::string_view logging_prefix,
+    litert::GpuOptions& gpu_options) {
+#if defined(LITERT_USE_WEBGPU_ACCELERATOR)
+  gpu_options.SetBackend(GpuOptions::Backend::kWebGpu);
+#endif  // defined(LITERT_USE_WEBGPU_ACCELERATOR)
+  gpu_options.EnableConstantTensorSharing(true);
+  // TODO(b/484646529): Re-enable precision setting once the GPU vision
+  // encoder precision is fixed.
+  // if (activation_data_type == ActivationDataType::FLOAT32) {
+  //   gpu_options.SetPrecision(GpuOptions::Precision::kFp32);
+  // } else {
+  //   gpu_options.SetPrecision(GpuOptions::Precision::kFp16);
+  // }
+  gpu_options.SetPrecision(GpuOptions::Precision::kFp32);
+#if defined(__APPLE__)
+  gpu_options.SetPreferTextureWeights(false);
+  gpu_options.SetUseMetalArgumentBuffers(true);
+#else   // !__APPLE__
+  gpu_options.SetPreferTextureWeights(true);
+#endif  // !__APPLE__
+  gpu_options.SetModelCacheKey(cache_key.data());
+  std::string cache_path = weight_cache_path;
+  bool serialization_dir_set = false;
+  if (cache_path != ":nocache") {
+    if (cache_path.empty()) {
+      ASSIGN_OR_RETURN(auto model_path,
+                       executor_settings.GetModelAssets().GetPath());
+      cache_path =
+          std::filesystem::path(std::string(model_path)).parent_path().string();
+      if (cache_path.empty()) {
+        cache_path = std::filesystem::current_path().string();
+      }
+    }
+    gpu_options.SetSerializationDir(cache_path.c_str());
+    gpu_options.SetSerializeExternalTensors(true);
+    serialization_dir_set = true;
+  }
+  if (program_cache_file.ok()) {
+    if (std::holds_alternative<std::string>(*program_cache_file)) {
+      if (!serialization_dir_set) {
+        cache_path =
+            std::filesystem::path(std::get<std::string>(*program_cache_file))
+                .parent_path()
+                .string();
+        gpu_options.SetSerializationDir(cache_path.c_str());
+      }
+    } else {
+      auto scoped_cache_file =
+          std::get<std::shared_ptr<lm::ScopedFile>>(*program_cache_file);
+      ASSIGN_OR_RETURN(auto duplicated, scoped_cache_file->Duplicate());
+      ASSIGN_OR_RETURN(int fd, duplicated.Release());
+      gpu_options.SetProgramCacheFd(fd);
+    }
+    gpu_options.SetSerializeProgramCache(true);
+  } else {
+    gpu_options.SetSerializeProgramCache(false);
+  }
+  return absl::OkStatus();
+}
+
 }  // namespace
 
 absl::StatusOr<
@@ -134,36 +204,18 @@ absl::Status VisionLiteRtCompiledModelExecutor::VisionEncoder::Initialize() {
     }
     case Backend::GPU: {
       // TODO: b/403132820 - Add accelerator compilation options for ML_DRIFT.
-
       LITERT_ASSIGN_OR_RETURN(auto& gpu_options, options.GetGpuOptions());
-      gpu_options.EnableConstantTensorSharing(true);
-      // TODO(b/484646529): Re-enable precision setting once the GPU vision
-      // encoder precision is fixed.
-      // if (activation_data_type == ActivationDataType::FLOAT32) {
-      //   gpu_options.SetPrecision(GpuOptions::Precision::kFp32);
-      // } else {
-      //   gpu_options.SetPrecision(GpuOptions::Precision::kFp16);
-      // }
-      gpu_options.SetPrecision(GpuOptions::Precision::kFp32);
-#if defined(__APPLE__)
-      gpu_options.SetPreferTextureWeights(false);
-      gpu_options.SetUseMetalArgumentBuffers(true);
-#else   // !__APPLE__
-      gpu_options.SetPreferTextureWeights(true);
-#endif  // !__APPLE__
-
-      if (weight_cache_path != ":nocache") {
-        ASSIGN_OR_RETURN(auto model_path,
-                         vision_executor_settings_.GetModelAssets().GetPath());
-        if (weight_cache_path.empty()) {
-          weight_cache_path = Dirname(model_path);
-        }
-        gpu_options.SetSerializationDir(weight_cache_path.c_str());
-        absl::string_view model_name = Basename(model_path);
-        gpu_options.SetModelCacheKey(model_name.data());
-        gpu_options.SetSerializeProgramCache(true);
-        gpu_options.SetSerializeExternalTensors(true);
-      }
+      ASSIGN_OR_RETURN(auto model_path,
+                       vision_executor_settings_.GetModelAssets().GetPath());
+      absl::string_view model_basename = Basename(model_path);
+      auto program_cache_file = vision_executor_settings_.GetProgramCacheFile(
+          ".mldrift_program_cache.vision_encoder.bin");
+      RETURN_IF_ERROR(
+          SetGpuOptions(weight_cache_path,
+                        vision_executor_settings_.GetScopedEncoderCacheFile(),
+                        program_cache_file, vision_executor_settings_,
+                        absl::StrCat(model_basename, ".vision_encoder"),
+                        "vision_encoder", gpu_options));
       options.SetHardwareAccelerators(litert::HwAccelerators::kGpu);
       break;
     }

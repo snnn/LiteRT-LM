@@ -18,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -27,7 +28,12 @@
 #include "absl/log/log_entry.h"  // from @com_google_absl
 #include "absl/log/log_sink.h"  // from @com_google_absl
 #include "absl/status/status.h"  // from @com_google_absl
+#include "absl/status/statusor.h"  // from @com_google_absl
+#include "absl/strings/string_view.h"  // from @com_google_absl
 #include "absl/synchronization/mutex.h"  // from @com_google_absl
+#include "nlohmann/json.hpp"  // from @nlohmann_json
+#include "runtime/engine/engine.h"
+#include "runtime/engine/engine_settings.h"
 #include "runtime/engine/io_types.h"
 
 namespace litert {
@@ -122,6 +128,23 @@ struct LitertLmMetrics {
   float peak_mem_mb = 0.0f;
   float peak_private_mb = 0.0f;
 };
+
+// Builds the content list from the given prompt view and images.
+// TODO(b/453071109): Add support for audio.
+absl::Status BuildContentList(const std::vector<InputData>& input_data,
+                              const LiteRtLmSettings& settings,
+                              nlohmann::json& content_list);
+
+// Creates the EngineSettings from the LiteRtLmSettings.
+absl::StatusOr<EngineSettings> CreateEngineSettings(
+    const LiteRtLmSettings& settings);
+
+// Creates an Engine instance from the settings.
+absl::StatusOr<std::unique_ptr<Engine>> CreateEngine(
+    const LiteRtLmSettings& settings, const EngineSettings& engine_settings);
+
+// Creates the SessionConfig from the LiteRtLmSettings.
+SessionConfig CreateSessionConfig(const LiteRtLmSettings& settings);
 
 // Runs the LLM inference with the given settings.
 // If metrics is not null, the metrics will be populated with the metrics from

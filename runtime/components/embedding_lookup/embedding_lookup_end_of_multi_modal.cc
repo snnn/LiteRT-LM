@@ -150,17 +150,11 @@ absl::Status EndOfMultiModalEmbedding::LookupPrefill(
 }
 
 absl::StatusOr<std::unique_ptr<EndOfMultiModalEmbedding>>
-EndOfMultiModalEmbedding::Create(const litert::Model* absl_nonnull model,
-                                 int special_token,
-                                 litert::Environment* absl_nullable env) {
-  if (env == nullptr) {
-    return absl::InvalidArgumentError(
-        "litert::Environment must be provided to "
-        "EndOfMultiModalEmbedding::Create.");
-  }
-  auto handler =
-      std::unique_ptr<EndOfMultiModalEmbedding>(new EndOfMultiModalEmbedding(
-          *env, model, special_token));
+EndOfMultiModalEmbedding::Create(litert::Environment& env,
+                                 const litert::Model* absl_nonnull model,
+                                 int special_token) {
+  auto handler = std::unique_ptr<EndOfMultiModalEmbedding>(
+      new EndOfMultiModalEmbedding(env, model, special_token));
   RETURN_IF_ERROR(  // IWYU pragma: keep as is included by status_macros.h
       handler->Initialize());
   return handler;

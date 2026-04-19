@@ -104,20 +104,6 @@ TEST(DataStreamTest, SubStreamOfSubStream) {
   EXPECT_EQ(magic_number, "ITERTLM");
 }
 
-TEST(DataStreamTest, SubStreamReadAfterParentDestroyed) {
-  std::shared_ptr<DataStream> sub_stream;
-  {
-    ASSERT_OK_AND_ASSIGN(auto stream,
-                         FileDataStream::Create(GetTestModelPath()));
-    ASSERT_OK_AND_ASSIGN(sub_stream, stream->OpenSubStream(0, 8));
-  }
-
-  std::vector<char> buffer(1);
-  absl::Status status = sub_stream->ReadAndPreserve(buffer.data(), 0, 1);
-  EXPECT_EQ(status.code(), absl::StatusCode::kFailedPrecondition);
-  EXPECT_THAT(status.message(), HasSubstr("Parent stream is expired"));
-}
-
 TEST(DataStreamTest, SubStreamCannotOverlap) {
   ASSERT_OK_AND_ASSIGN(auto stream, FileDataStream::Create(GetTestModelPath()));
   ASSERT_OK_AND_ASSIGN(auto sub_stream1, stream->OpenSubStream(0, 10));

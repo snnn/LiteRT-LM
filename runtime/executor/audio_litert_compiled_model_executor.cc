@@ -17,10 +17,12 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>  //NOLINT
 #include <memory>
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 #include "absl/base/nullability.h"  // from @com_google_absl
@@ -54,6 +56,7 @@
 #include "runtime/executor/executor_settings_base.h"
 #include "runtime/executor/litert_compiled_model_executor_utils.h"
 #include "runtime/executor/llm_executor_io_types.h"
+#include "runtime/util/file_util.h"
 #include "runtime/util/scoped_file.h"
 #include "runtime/util/status_macros.h"  //NOLINT
 
@@ -77,6 +80,78 @@ absl::Status SetCpuCacheOptions(
                    << " use cache path: " << weight_cache_path;
   } else {
     ABSL_LOG(INFO) << logging_prefix << " does not use cache.";
+  }
+  return absl::OkStatus();
+}
+
+absl::Status SetGpuOptions(
+    const std::string& weight_cache_path,
+    std::shared_ptr<litert::lm::ScopedFile> scoped_cache_file,
+    const absl::StatusOr<
+        std::variant<std::string, std::shared_ptr<litert::lm::ScopedFile>>>&
+        program_cache_file,
+    const AudioExecutorSettings& executor_settings, absl::string_view cache_key,
+    absl::string_view logging_prefix, litert::GpuOptions& gpu_options) {
+#if defined(LITERT_USE_WEBGPU_ACCELERATOR)
+  gpu_options.SetBackend(GpuOptions::Backend::kWebGpu);
+#endif  // defined(LITERT_USE_WEBGPU_ACCELERATOR)
+  gpu_options.EnableConstantTensorSharing(true);
+  // TODO(b/484646529): Re-enable precision setting once the GPU audio
+  // encoder precision is fixed. Similar to vision encoder, we force FP32 for
+  // now.
+  // if (executor_settings.GetActivationDataType().has_value()) {
+  //   if (executor_settings.GetActivationDataType().value() ==
+  //       ActivationDataType::FLOAT32) {
+  //     gpu_options.SetPrecision(GpuOptions::Precision::kFp32);
+  //   } else {
+  //     gpu_options.SetPrecision(GpuOptions::Precision::kFp16);
+  //   }
+  // } else {
+  //   gpu_options.SetPrecision(GpuOptions::Precision::kFp32);
+  // }
+  gpu_options.SetPrecision(GpuOptions::Precision::kFp32);
+#if defined(__APPLE__)
+  gpu_options.SetPreferTextureWeights(false);
+  gpu_options.SetUseMetalArgumentBuffers(true);
+#else   // !__APPLE__
+  gpu_options.SetPreferTextureWeights(true);
+#endif  // !__APPLE__
+  gpu_options.SetModelCacheKey(cache_key.data());
+  std::string cache_path = weight_cache_path;
+  bool serialization_dir_set = false;
+  if (cache_path != ":nocache") {
+    if (cache_path.empty()) {
+      ASSIGN_OR_RETURN(auto model_path,
+                       executor_settings.GetModelAssets().GetPath());
+      cache_path =
+          std::filesystem::path(std::string(model_path)).parent_path().string();
+      if (cache_path.empty()) {
+        cache_path = std::filesystem::current_path().string();
+      }
+    }
+    gpu_options.SetSerializationDir(cache_path.c_str());
+    gpu_options.SetSerializeExternalTensors(true);
+    serialization_dir_set = true;
+  }
+  if (program_cache_file.ok()) {
+    if (std::holds_alternative<std::string>(*program_cache_file)) {
+      if (!serialization_dir_set) {
+        cache_path =
+            std::filesystem::path(std::get<std::string>(*program_cache_file))
+                .parent_path()
+                .string();
+        gpu_options.SetSerializationDir(cache_path.c_str());
+      }
+    } else {
+      auto scoped_cache_file =
+          std::get<std::shared_ptr<lm::ScopedFile>>(*program_cache_file);
+      ASSIGN_OR_RETURN(auto duplicated, scoped_cache_file->Duplicate());
+      ASSIGN_OR_RETURN(int fd, duplicated.Release());
+      gpu_options.SetProgramCacheFd(fd);
+    }
+    gpu_options.SetSerializeProgramCache(true);
+  } else {
+    gpu_options.SetSerializeProgramCache(false);
   }
   return absl::OkStatus();
 }
@@ -166,16 +241,21 @@ AudioLiteRtCompiledModelExecutor::AudioStaticEncoder::Create(
 absl::Status
 AudioLiteRtCompiledModelExecutor::AudioStaticEncoder::Initialize() {
   LITERT_ASSIGN_OR_RETURN(auto options, Options::Create());
-  auto weight_cache_file =
-      executor_settings_.GetWeightCacheFile(".audio_encoder.xnnpack_cache");
+  auto weight_cache_file = executor_settings_.GetWeightCacheFile(
+      ".static_audio_encoder.xnnpack_cache");
+  std::string weight_cache_path = executor_settings_.GetCacheDir();
   if (executor_settings_.GetBackend() == Backend::GPU) {
     LITERT_ASSIGN_OR_RETURN(auto& gpu_options, options.GetGpuOptions());
-    gpu_options.EnableConstantTensorSharing(true);
-    gpu_options.SetPrecision(GpuOptions::Precision::kFp32);
-    gpu_options.SetPreferTextureWeights(true);
-#if defined(LITERT_USE_WEBGPU_ACCELERATOR)
-    gpu_options.SetBackend(GpuOptions::Backend::kWebGpu);
-#endif  // defined(LITERT_USE_WEBGPU_ACCELERATOR)
+    ASSIGN_OR_RETURN(auto model_path,
+                     executor_settings_.GetModelAssets().GetPath());
+    absl::string_view model_basename = Basename(model_path);
+    auto program_cache_file = executor_settings_.GetProgramCacheFile(
+        ".mldrift_program_cache.static_audio_encoder.bin");
+    RETURN_IF_ERROR(SetGpuOptions(
+        weight_cache_path, executor_settings_.GetScopedEncoderCacheFile(),
+        program_cache_file, executor_settings_,
+        absl::StrCat(model_basename, ".static_audio_encoder"), "audio_encoder",
+        gpu_options));
     options.SetHardwareAccelerators(litert::HwAccelerators::kGpu);
   } else if (executor_settings_.GetBackend() == Backend::CPU) {
     LITERT_ASSIGN_OR_RETURN(auto& cpu_options, options.GetCpuOptions());
@@ -291,16 +371,21 @@ AudioLiteRtCompiledModelExecutor::AudioStreamingEncoder::Create(
 absl::Status
 AudioLiteRtCompiledModelExecutor::AudioStreamingEncoder::Initialize() {
   LITERT_ASSIGN_OR_RETURN(auto options, Options::Create());
-  auto weight_cache_file =
-      executor_settings_.GetWeightCacheFile(".audio_encoder.xnnpack_cache");
+  auto weight_cache_file = executor_settings_.GetWeightCacheFile(
+      ".streaming_audio_encoder.xnnpack_cache");
+  std::string weight_cache_path = executor_settings_.GetCacheDir();
   if (executor_settings_.GetBackend() == Backend::GPU) {
     LITERT_ASSIGN_OR_RETURN(auto& gpu_options, options.GetGpuOptions());
-    gpu_options.EnableConstantTensorSharing(true);
-    gpu_options.SetPrecision(GpuOptions::Precision::kFp32);
-    gpu_options.SetPreferTextureWeights(true);
-#if defined(LITERT_USE_WEBGPU_ACCELERATOR)
-    gpu_options.SetBackend(GpuOptions::Backend::kWebGpu);
-#endif  // defined(LITERT_USE_WEBGPU_ACCELERATOR)
+    ASSIGN_OR_RETURN(auto model_path,
+                     executor_settings_.GetModelAssets().GetPath());
+    absl::string_view model_basename = Basename(model_path);
+    auto program_cache_file = executor_settings_.GetProgramCacheFile(
+        ".mldrift_program_cache.streaming_audio_encoder.bin");
+    RETURN_IF_ERROR(SetGpuOptions(
+        weight_cache_path, executor_settings_.GetScopedEncoderCacheFile(),
+        program_cache_file, executor_settings_,
+        absl::StrCat(model_basename, ".streaming_audio_encoder"),
+        "audio_encoder", gpu_options));
     options.SetHardwareAccelerators(litert::HwAccelerators::kGpu);
   } else if (executor_settings_.GetBackend() == Backend::CPU) {
     LITERT_ASSIGN_OR_RETURN(auto& cpu_options, options.GetCpuOptions());

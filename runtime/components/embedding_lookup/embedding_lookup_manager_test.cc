@@ -77,8 +77,8 @@ class EmbeddingLookupManagerTest : public ::testing::Test {
         {-3, &end_of_multi_modal_model_});
 
     auto status = EmbeddingLookupManager::Create(
-        &text_embedding_model_, end_of_multi_modal_embedding_models,
-        /*fully_supports_multi_modal=*/true, std::nullopt, &*env_);
+        *env_, &text_embedding_model_, end_of_multi_modal_embedding_models,
+        /*fully_supports_multi_modal=*/true, std::nullopt);
     ASSERT_OK(status);
     embedding_lookup_manager_ = std::move(status.value());
   }
@@ -1100,8 +1100,8 @@ TEST_F(EmbeddingLookupManagerTest,
 TEST_F(EmbeddingLookupManagerTest,
        LookupPrefillTextMultipleTokensWithPartialMultiModalSupport) {
   auto status = EmbeddingLookupManager::Create(
-      &text_embedding_model_, /*fully_supports_multi_modal=*/false,
-      std::nullopt, &*env_);
+      *env_, &text_embedding_model_, /*fully_supports_multi_modal=*/false,
+      std::nullopt);
   ASSERT_OK(status);
   embedding_lookup_manager_ = std::move(status.value());
   ASSERT_NE(embedding_lookup_manager_, nullptr);
@@ -1183,8 +1183,8 @@ TEST_F(EmbeddingLookupManagerTest,
 TEST_F(EmbeddingLookupManagerTest,
        LookupPrefillMultimodalMultipleTokensWithPartialMultiModalSupport) {
   auto status = EmbeddingLookupManager::Create(
-      &text_embedding_model_, /*fully_supports_multi_modal=*/false,
-      std::nullopt, &*env_);
+      *env_, &text_embedding_model_, /*fully_supports_multi_modal=*/false,
+      std::nullopt);
   ASSERT_OK(status);
   embedding_lookup_manager_ = std::move(status.value());
   ASSERT_NE(embedding_lookup_manager_, nullptr);
@@ -1250,8 +1250,8 @@ TEST_F(EmbeddingLookupManagerTest,
 TEST_F(EmbeddingLookupManagerTest,
        LookupPrefillTextMultipleTokensWithPartialMultiModalSupportWithOffset) {
   auto status = EmbeddingLookupManager::Create(
-      &text_embedding_model_, /*fully_supports_multi_modal=*/false,
-      std::nullopt, &*env_);
+      *env_, &text_embedding_model_, /*fully_supports_multi_modal=*/false,
+      std::nullopt);
   ASSERT_OK(status);
   embedding_lookup_manager_ = std::move(status.value());
   ASSERT_NE(embedding_lookup_manager_, nullptr);
@@ -1356,8 +1356,8 @@ TEST_F(EmbeddingLookupManagerTest,
 TEST_F(EmbeddingLookupManagerTest,
        LookupPrefillTokenVectorWithPartialMultiModalSupport) {
   auto status = EmbeddingLookupManager::Create(
-      &text_embedding_model_, /*fully_supports_multi_modal=*/false,
-      std::nullopt, &*env_);
+      *env_, &text_embedding_model_, /*fully_supports_multi_modal=*/false,
+      std::nullopt);
   ASSERT_OK(status);
   embedding_lookup_manager_ = std::move(status.value());
   ASSERT_NE(embedding_lookup_manager_, nullptr);
@@ -1397,8 +1397,8 @@ TEST_F(EmbeddingLookupManagerTest,
 
 TEST_F(EmbeddingLookupManagerTest, LookupPrefillTokenSpecifySignatureKey) {
   auto status = EmbeddingLookupManager::Create(
-      &text_embedding_model_, /*fully_supports_multi_modal=*/false,
-      "serving_default", &*env_);
+      *env_, &text_embedding_model_, /*fully_supports_multi_modal=*/false,
+      "serving_default");
   ASSERT_OK(status);
   embedding_lookup_manager_ = std::move(status.value());
   ASSERT_NE(embedding_lookup_manager_, nullptr);
@@ -1439,8 +1439,8 @@ TEST_F(EmbeddingLookupManagerTest, LookupPrefillTokenSpecifySignatureKey) {
 TEST_F(EmbeddingLookupManagerTest,
        LookupPrefillPartialMultiModalSupportWithEmbeddings) {
   auto status = EmbeddingLookupManager::Create(
-      &text_embedding_model_, /*fully_supports_multi_modal=*/false,
-      std::nullopt, &*env_);
+      *env_, &text_embedding_model_, /*fully_supports_multi_modal=*/false,
+      std::nullopt);
   ASSERT_OK(status);
   embedding_lookup_manager_ = std::move(status.value());
   ASSERT_NE(embedding_lookup_manager_, nullptr);
@@ -1459,8 +1459,8 @@ TEST_F(EmbeddingLookupManagerTest,
       end_of_multi_modal_embedding_models;
   end_of_multi_modal_embedding_models.insert({-3, &end_of_multi_modal_model_});
   auto status = EmbeddingLookupManager::Create(
-      &text_embedding_model_, end_of_multi_modal_embedding_models,
-      /*fully_supports_multi_modal=*/false, std::nullopt, &*env_);
+      *env_, &text_embedding_model_, end_of_multi_modal_embedding_models,
+      /*fully_supports_multi_modal=*/false, std::nullopt);
   ASSERT_THAT(status,
               testing::status::StatusIs(
                   absl::StatusCode::kInvalidArgument,

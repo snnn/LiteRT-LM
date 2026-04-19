@@ -244,15 +244,11 @@ absl::Status EmbeddingLookupText::LookupPrefill(absl::Span<const int> tokens,
 }
 
 absl::StatusOr<std::unique_ptr<EmbeddingLookupText>>
-EmbeddingLookupText::Create(const litert::Model* absl_nonnull model,
-                            std::optional<std::string> signature_key,
-                            litert::Environment* absl_nullable env) {
-  if (env == nullptr) {
-    return absl::InvalidArgumentError(
-        "litert::Environment must be provided to EmbeddingLookupText::Create.");
-  }
-  auto handler = std::unique_ptr<EmbeddingLookupText>(new EmbeddingLookupText(
-      *env, model, signature_key));
+EmbeddingLookupText::Create(litert::Environment& env,
+                            const litert::Model* absl_nonnull model,
+                            std::optional<std::string> signature_key) {
+  auto handler = std::unique_ptr<EmbeddingLookupText>(
+      new EmbeddingLookupText(env, model, signature_key));
   RETURN_IF_ERROR(handler->Initialize());
   return handler;
 }
@@ -304,6 +300,7 @@ absl::Status EmbeddingLookupText::Initialize() {
     signature_key_ = signatures.front().Key();
   }
 
+  ABSL_LOG(INFO) << "EmbeddingLookupText::Initialize Creating input buffers";
   LITERT_ASSIGN_OR_RETURN(input_buffers_, compiled_model_->CreateInputBuffers(
                                               signature_key_.value()));
 

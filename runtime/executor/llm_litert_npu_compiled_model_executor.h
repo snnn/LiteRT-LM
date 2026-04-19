@@ -15,6 +15,7 @@
 #ifndef THIRD_PARTY_ODML_LITERT_LM_RUNTIME_EXECUTOR_LITERT_NPU_COMPILED_MODEL_EXECUTOR_H_
 #define THIRD_PARTY_ODML_LITERT_LM_RUNTIME_EXECUTOR_LITERT_NPU_COMPILED_MODEL_EXECUTOR_H_
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -29,6 +30,9 @@
 #include "absl/types/span.h"  // from @com_google_absl
 #include "litert/cc/litert_compiled_model.h"  // from @litert
 #include "litert/cc/litert_environment.h"  // from @litert
+#include "litert/cc/litert_expected.h"  // from @litert
+#include "litert/cc/litert_model.h"  // from @litert
+#include "litert/cc/litert_options.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer.h"  // from @litert
 #include "runtime/components/embedding_lookup/embedding_lookup_manager.h"
 #include "runtime/components/model_resources.h"
@@ -71,8 +75,13 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
     uint64_t decode_mask_inference_latency_us = 0;
     uint64_t decode_rope_inference_latency_us = 0;
     uint64_t decode_llm_inference_latency_us = 0;
+    uint64_t decode_drafter_inference_latency_us = 0;
     uint64_t decode_cache_update_inference_latency_us = 0;
     uint64_t decode_sampling_latency_us = 0;
+
+    // MTP / Speculative Decoding latency stats.
+    int mtp_num_draft_tokens = 0;
+    int mtp_num_accepted_tokens = 0;
   };
 
   // Creates an executor from the resources.
@@ -132,6 +141,12 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
 
   // Holds the tensor buffer maps for the inference of a precompiled model,
   // both for prefill and decode.
+
+  enum class SpeculativeDecodingType {
+    kNone,
+    kMTP,
+  };
+
   struct InferenceContext {
     absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
         prefill_input_buffers;
@@ -141,6 +156,10 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
         decode_input_buffers;
     absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
         decode_output_buffers;
+    absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+        verify_input_buffers;
+    absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+        verify_output_buffers;
     InferenceContext(
         absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
             prefill_input_buffers,
@@ -149,10 +168,59 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
         absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
             decode_input_buffers,
         absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
-            decode_output_buffers);
+            decode_output_buffers,
+        absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+            verify_input_buffers = {},
+        absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+            verify_output_buffers = {});
   };
 
-  // Holds the context for the embedder model.
+  // Holds the context for the drafter model.
+  struct DrafterContext {
+    ::litert::CompiledModel mtp_compiled_model;
+    absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+        mtp_input_buffers;
+    absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+        mtp_output_buffers;
+    DrafterContext(
+        ::litert::CompiledModel mtp_compiled_model,
+        absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+            mtp_input_buffers,
+        absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+            mtp_output_buffers)
+        : mtp_compiled_model(std::move(mtp_compiled_model)),
+          mtp_input_buffers(std::move(mtp_input_buffers)),
+          mtp_output_buffers(std::move(mtp_output_buffers)) {}
+  };
+
+  // Holds the context for the drafter auxiliary model.
+  struct DrafterAuxContext {
+    ::litert::CompiledModel mtp_aux_compiled_model;
+    absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+        rope_input_buffers;
+    absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+        rope_output_buffers;
+    absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+        mask_input_buffers;
+    absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+        mask_output_buffers;
+    DrafterAuxContext(
+        ::litert::CompiledModel mtp_aux_compiled_model,
+        absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+            rope_input_buffers,
+        absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+            rope_output_buffers,
+        absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+            mask_input_buffers,
+        absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+            mask_output_buffers)
+        : mtp_aux_compiled_model(std::move(mtp_aux_compiled_model)),
+          rope_input_buffers(std::move(rope_input_buffers)),
+          rope_output_buffers(std::move(rope_output_buffers)),
+          mask_input_buffers(std::move(mask_input_buffers)),
+          mask_output_buffers(std::move(mask_output_buffers)) {}
+  };
+
   struct EmbedderContext {
     ::litert::Model embedder_model;
     ::litert::CompiledModel embedder_compiled_model;
@@ -166,7 +234,11 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
         absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
             decode_input_buffers,
         absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
-            decode_output_buffers);
+            decode_output_buffers,
+        absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+            verify_input_buffers = {},
+        absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+            verify_output_buffers = {});
   };
 
   // Holds the context for the embedder per layer model.
@@ -182,13 +254,19 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
         absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
             decode_input_buffers,
         absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
-            decode_output_buffers)
+            decode_output_buffers,
+        absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+            verify_input_buffers = {},
+        absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>
+            verify_output_buffers = {})
         : embedder_per_layer_compiled_model(
               std::move(embedder_per_layer_compiled_model)),
           inference_context(std::move(prefill_input_buffers),
                             std::move(prefill_output_buffers),
                             std::move(decode_input_buffers),
-                            std::move(decode_output_buffers)) {}
+                            std::move(decode_output_buffers),
+                            std::move(verify_input_buffers),
+                            std::move(verify_output_buffers)) {}
   };
 
   // Holds the context for the NPU auxiliary model, which contains several
@@ -210,7 +288,11 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
       SortedPrefillSignatureMap prefill_signature_map,
       std::unique_ptr<EmbeddingLookupManager> embedding_lookup_manager,
       std::optional<EmbedderPerLayerContext> embedder_per_layer_context,
-      LogitsQuantizationParams quantization_params)
+      LogitsQuantizationParams quantization_params,
+      SpeculativeDecodingType speculative_decoding_type =
+          SpeculativeDecodingType::kNone,
+      std::optional<DrafterContext> drafter_context = std::nullopt,
+      std::optional<DrafterAuxContext> drafter_aux_context = std::nullopt)
       : executor_settings_(std::move(executor_settings)),
         env_(llm_env),
         embedder_context_(std::move(embedder_context)),
@@ -224,8 +306,16 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
         cache_update_inference_context_(
             std::move(cache_update_inference_context)),
         prefill_signature_map_(std::move(prefill_signature_map)),
+        speculative_decoding_type_(speculative_decoding_type),
+        drafter_context_(std::move(drafter_context)),
+        drafter_aux_context_(std::move(drafter_aux_context)),
         per_tensor_logits_scale_(quantization_params.scale),
-        per_tensor_logits_zero_point_(quantization_params.zero_point) {}
+        per_tensor_logits_zero_point_(quantization_params.zero_point) {
+    if (embedder_per_layer_context_.has_value()) {
+      latency_stats_.prefill_embedder_per_layer_inference_latency_us = 0;
+      latency_stats_.decode_embedder_per_layer_inference_latency_us = 0;
+    }
+  }
 
  private:
   // Prefill internal implementation, for one prefill call to the Interpreter
@@ -242,6 +332,35 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
   // - step: The current time step.
   // - token: The input token to decode.
   absl::Status DecodeInternal(int step, std::shared_ptr<TokenData> token);
+
+  // Run the drafter loop for MTP.
+  // Persistent buffer to store the sliced activations from the last verifier
+  // run, to be used as input for the next speculative cycle.
+  std::vector<uint8_t> last_verify_activations_;
+  bool has_valid_verify_activations_ = false;
+
+  // Queue of token IDs that have been accepted by the verifier but not yet
+  // returned to the engine.
+  std::vector<int> pending_accepted_tokens_;
+
+  // Run the drafter loop for MTP, returning the draft tokens.
+  absl::StatusOr<std::vector<int>> RunDrafterLoop(int start_step,
+                                                  int current_token_id);
+  // Run the verifier batch for MTP.
+  absl::Status RunVerifierBatch(int start_step, int current_token_id,
+                                const std::vector<int>& draft_tokens);
+
+  // Rejection sampling for MTP. Returns (num_accepted, bonus_token_id).
+  struct RejectionSamplingResult {
+    int num_accepted;
+    int bonus_token_id;
+  };
+  absl::StatusOr<RejectionSamplingResult> PerformRejectionSampling(
+      const std::vector<int>& draft_tokens,
+      const ::litert::TensorBuffer& verifier_logits_buffer);
+
+  // Commit the verified KV cache for MTP.
+  absl::Status CommitVerifiedKVCache(int start_step);
 
   // Creates the context for the embedder model.  Instead of creating new
   // output buffers for the embedder, the context will use the input buffers
@@ -266,10 +385,13 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
       ::litert::Environment& env, const litert::Model& embedder_model,
       const ::litert::TensorBuffer& prefill_input_tokens,
       const ::litert::TensorBuffer& decode_input_tokens,
+      const ::litert::TensorBuffer& verify_input_tokens,
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
           gemma_prefill_input_buffers,
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
           gemma_decode_input_buffers,
+      absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
+          gemma_verify_input_buffers,
       const LlmExecutorSettings& settings);
 
   // Creates the context for the embedder per layer model.  Instead of creating
@@ -284,10 +406,13 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
       ::litert::Environment& env, const litert::Model& embedder_model,
       const ::litert::TensorBuffer& prefill_input_tokens,
       const ::litert::TensorBuffer& decode_input_tokens,
+      const ::litert::TensorBuffer& verify_input_tokens,
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
           gemma_prefill_input_buffers,
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
           gemma_decode_input_buffers,
+      absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
+          gemma_verify_input_buffers,
       const LlmExecutorSettings& settings);
 
   // Creates the context for the NPU auxiliary model.
@@ -300,22 +425,22 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
   // of the provided 'gemma_prefill_input_buffers' and
   // 'gemma_decode_input_buffers'.
   static absl::StatusOr<InferenceContext> CreateMaskContextWithBufferSharing(
-      NpuAuxiliaryContext& npu_auxiliary_context,
+      const NpuAuxiliaryContext& npu_auxiliary_context,
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
           gemma_prefill_input_buffers,
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
-          gemma_decode_input_buffers);
+          gemma_decode_input_buffers,
+      absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
+          gemma_verify_input_buffers);
 
-  // Creates the context for the RoPE model.  Instead of creating new
-  // output buffers for the RoPE model, the context will use the input buffers
-  // of the provided 'gemma_prefill_input_buffers' and
-  // 'gemma_decode_input_buffers'.
   static absl::StatusOr<InferenceContext> CreateRopeContextWithBufferSharing(
-      NpuAuxiliaryContext& npu_auxiliary_context,
+      const NpuAuxiliaryContext& npu_auxiliary_context,
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
           gemma_prefill_input_buffers,
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
-          gemma_decode_input_buffers);
+          gemma_decode_input_buffers,
+      absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
+          gemma_verify_input_buffers);
 
   // Creates the context for the LLM model.
   static absl::StatusOr<InferenceContext>
@@ -328,9 +453,13 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
           decode_output_kv_cache_slice_buffers,
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
+          verify_output_kv_cache_slice_buffers,
+      absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
           gemma_prefill_input_buffers,
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
-          gemma_decode_input_buffers);
+          gemma_decode_input_buffers,
+      absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
+          gemma_verify_input_buffers);
 
   static absl::StatusOr<InferenceContext>
   CreateCacheUpdateInferenceContextWithBufferSharing(
@@ -340,8 +469,11 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
           prefill_output_kv_cache_slice_buffers,
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
           decode_output_kv_cache_slice_buffers,
+      absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
+          verify_output_kv_cache_slice_buffers,
       ::litert::TensorBuffer prefill_input_pos,
-      ::litert::TensorBuffer decode_input_pos);
+      ::litert::TensorBuffer decode_input_pos,
+      ::litert::TensorBuffer verify_input_pos);
   // Run a 'warmup' inference on every model (prefill and decode).  This is
   // intended to be called before the first actual inference.
   static absl::Status WarmupInference(
@@ -352,6 +484,12 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
       const InferenceContext& mask_inference_context,
       const InferenceContext& cache_update_inference_context);
 
+  // Run a 'warmup' inference on the drafter model.  This is intended to be
+  // called before the first actual inference.
+  static absl::Status WarmupDrafterInference(
+      const DrafterContext& drafter_context,
+      const DrafterAuxContext& drafter_aux_context);
+
   // Clears all buffers in the provided 'buffers' map that belong to the KV
   // cache.
   static absl::Status ClearKVCache(
@@ -361,8 +499,21 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
     return embedding_lookup_manager_ != nullptr;
   }
 
-  // Allocates the transformer buffers. The buffers will be stored in the
+  // Allocates the MTP drafter buffers. The buffers will be stored in the
   // provided output parameters.
+  static absl::StatusOr<DrafterContext>
+  CreateDrafterInferenceContextWithBufferSharing(
+      ::litert::Environment& env, const litert::Model& mtp_drafter_model,
+      absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
+          drafter_input_kv_cache_buffers,
+      ::litert::TensorBuffer& output_activations_buffers);
+
+  static absl::StatusOr<DrafterAuxContext>
+  CreateDrafterInferenceAuxContextWithBufferSharing(
+      ::litert::Environment& env, const litert::Model& mtp_aux_model,
+      const absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
+          drafter_aux_output_buffers);
+
   static absl::Status AllocateTransformerBuffers(
       litert::Environment& env, const litert::Model* transformer_model,
       CompiledModel& llm_compiled_model,
@@ -371,11 +522,15 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
           gemma_decode_input_buffers,
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
+          gemma_verify_input_buffers,
+      absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
           input_kv_cache_buffers,
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
           prefill_output_kv_cache_slice_buffers,
       absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
-          decode_output_kv_cache_slice_buffers);
+          decode_output_kv_cache_slice_buffers,
+      absl::flat_hash_map<absl::string_view, ::litert::TensorBuffer>&
+          verify_output_kv_cache_slice_buffers);
 
   // Create the executor for Gemma3n, with multi-modality support.
   static absl::StatusOr<std::unique_ptr<LlmLiteRtNpuCompiledModelExecutor>>
@@ -405,6 +560,12 @@ class LlmLiteRtNpuCompiledModelExecutor : public LlmExecutor {
   InferenceContext llm_inference_context_;
   InferenceContext cache_update_inference_context_;
   SortedPrefillSignatureMap prefill_signature_map_;
+
+  // MTP / Speculative Decoding members.
+  SpeculativeDecodingType speculative_decoding_type_ =
+      SpeculativeDecodingType::kNone;
+  std::optional<DrafterContext> drafter_context_;
+  std::optional<DrafterAuxContext> drafter_aux_context_;
 
   // The sampled ids to use for external sampling.
   // The layout is batch-major.

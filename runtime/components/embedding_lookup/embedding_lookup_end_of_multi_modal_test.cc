@@ -98,7 +98,7 @@ class EndOfMultiModalEmbeddingTest : public testing::Test {
       return nullptr;
     }
     auto status =
-        EndOfMultiModalEmbedding::Create(&*model_, special_token_, &*env_);
+        EndOfMultiModalEmbedding::Create(*env_, &*model_, special_token_);
     if (!status.ok()) {
       return nullptr;
     }

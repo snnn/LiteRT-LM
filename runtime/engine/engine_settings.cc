@@ -254,8 +254,6 @@ absl::Status EngineSettings::MaybeUpdateAndValidate(
   }
 
   if (!metadata.has_llm_model_type()) {
-    const auto& model_assets = main_executor_settings_.GetModelAssets();
-    auto model_path = model_assets.GetPath();
     if (tokenizer != nullptr) {
       ASSIGN_OR_RETURN(*metadata.mutable_llm_model_type(),
                        InferLlmModelType(metadata, tokenizer));
@@ -303,15 +301,14 @@ absl::Status EngineSettings::MaybeUpdateAndValidate(
   if (IsBenchmarkEnabled()) {
     advanced_settings.is_benchmark = true;
     main_executor_settings_.SetAdvancedSettings(advanced_settings);
-  } else if (!advanced_settings.gpu_context_low_priority.has_value()) {
-    // When we are not in benchmark mode, we set the OpenCL context low priority
-    // for generic models, such that the UI thread can be smoother.
-    advanced_settings.gpu_context_low_priority =
-        metadata.has_llm_model_type() &&
-        metadata.llm_model_type().has_generic_model();
+  }
+  // Set the hint kernel batch size for generic models on GPU.
+  if (!advanced_settings.hint_kernel_batch_size.has_value() &&
+      metadata.has_llm_model_type() &&
+      metadata.llm_model_type().has_generic_model()) {
+    advanced_settings.hint_kernel_batch_size = 4;
     main_executor_settings_.SetAdvancedSettings(advanced_settings);
   }
-
   if (!metadata.has_jinja_prompt_template()) {
     ASSIGN_OR_RETURN(*metadata.mutable_jinja_prompt_template(),
                      GetDefaultJinjaPromptTemplate(metadata.prompt_templates(),

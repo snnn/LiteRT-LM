@@ -46,8 +46,8 @@ class EndOfMultiModalEmbedding : public EmbeddingLookup {
   // multi-modal embedding. If the special token is not found in the tokens,
   // the end of multi-modal embedding will not be inserted.
   static absl::StatusOr<std::unique_ptr<EndOfMultiModalEmbedding>> Create(
-      const litert::Model* absl_nonnull model, int special_token,
-      litert::Environment* absl_nullable env = nullptr);
+      litert::Environment& env, const litert::Model* absl_nonnull model,
+      int special_token);
 
   // Multimodal embeddings are not supported during decode.
   absl::Status LookupDecode(int token,

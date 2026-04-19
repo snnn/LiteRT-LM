@@ -133,6 +133,12 @@ jobs:
             test --disk_cache=~/.cache/bazel-windows --test_output=errors `
             --test_tag_filters='-requires-mac-inputs:hard,-nowindows' //...
 
+      - name: Install pytest
+        run: python3 -m pip install --break-system-packages pytest==8.3.4
+
+      - name: Run pytest
+        run: pytest tools/test/ --model-path=${{ env.MODEL_PATH }} --build-system=bazel
+
       - name: Run bazel build on Windows with dynamic linking.
         run: |
           bazel --output_base="$env:BAZEL_OUTPUT_BASE" `
@@ -140,12 +146,6 @@ jobs:
             --define=litert_link_capi_so=true `
             --define=resolve_symbols_in_exec=false `
             //runtime/engine:litert_lm_main
-
-      - name: Install pytest
-        run: python3 -m pip install --break-system-packages pytest==8.3.4
-
-      - name: Run pytest
-        run: pytest tools/test/ --model-path=${{ env.MODEL_PATH }} --build-system=bazel
 
       - name: Remove cache if cache is being refreshed.
         if: env.REFRESH_CACHE == 'true'
