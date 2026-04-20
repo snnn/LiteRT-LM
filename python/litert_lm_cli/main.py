@@ -322,7 +322,6 @@ Speculative decoding mode ("auto", "true", "false").
 """,
   )(f)
   f = click.option(
-      "-b",
       "--backend",
       type=click.Choice(["cpu", "gpu"], case_sensitive=False),
       default="cpu",
