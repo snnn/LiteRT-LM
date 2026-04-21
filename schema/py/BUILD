@@ -29,6 +29,7 @@ pytype_strict_library(
     srcs = ["litertlm_core.py"],
     deps = [
         "//schema/core:litertlm_header_schema_py",
+        "@absl_py//absl:app",
     ],
 )
 
@@ -62,8 +63,8 @@ pytype_strict_binary(
         "notap",
     ],
     deps = [
+        ":litertlm_core",
         ":litertlm_peek",
-        "@absl_py//absl:app",
     ],
 )
 
@@ -117,7 +118,6 @@ pytype_strict_binary(
     deps = [
         ":litertlm_builder",
         ":litertlm_core",
-        "@absl_py//absl:app",
     ],
 )
 
