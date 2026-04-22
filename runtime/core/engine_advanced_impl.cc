@@ -51,6 +51,7 @@
 #include "runtime/executor/vision_executor_settings.h"
 #include "runtime/executor/vision_executor_utils.h"
 #include "runtime/framework/resource_management/execution_manager.h"
+#include "runtime/framework/resource_management/serial_execution_manager.h"
 #include "runtime/framework/resource_management/threaded_execution_manager.h"
 #include "runtime/proto/llm_metadata.pb.h"
 #include "runtime/proto/sampler_params.pb.h"
@@ -379,12 +380,22 @@ absl::StatusOr<std::unique_ptr<Engine>> EngineAdvancedImpl::Create(
     RETURN_IF_ERROR(benchmark_info->InitPhaseRecord(
         BenchmarkInfo::InitPhase::kTokenizer, tokenizer_duration));
   }
-  ASSIGN_OR_RETURN(
-      auto execution_manager,
-      ThreadedExecutionManager::Create(
-          tokenizer.get(), model_resources.get(), std::move(executor),
-          std::move(vision_executor_settings_ptr),
-          std::move(audio_executor_settings_ptr), &litert_env));
+  std::unique_ptr<ExecutionManager> execution_manager;
+  if (!engine_settings.GetSingleThreadedExecution()) {
+    ASSIGN_OR_RETURN(
+        execution_manager,
+        ThreadedExecutionManager::Create(
+            tokenizer.get(), model_resources.get(), std::move(executor),
+            std::move(vision_executor_settings_ptr),
+            std::move(audio_executor_settings_ptr), &litert_env));
+  } else {
+    ASSIGN_OR_RETURN(
+        execution_manager,
+        SerialExecutionManager::Create(
+            tokenizer.get(), model_resources.get(), std::move(executor),
+            std::move(vision_executor_settings_ptr),
+            std::move(audio_executor_settings_ptr), &litert_env));
+  }
 
   if (benchmark_info.has_value()) {
     RETURN_IF_ERROR(
