@@ -31,6 +31,19 @@ config_setting(
 )
 
 cc_library(
+    name = "message_formatter",
+    hdrs = ["message_formatter.h"],
+    deps = [
+        ":config_registry",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@nlohmann_json//:json",
+        "//runtime/conversation:io_types",
+    ],
+)
+
+cc_library(
     name = "config_registry",
     hdrs = [
         "config_registry.h",
@@ -41,6 +54,25 @@ cc_library(
         ":gemma4_data_processor_config",
         ":generic_data_processor_config",
         ":qwen3_data_processor_config",
+    ],
+)
+
+cc_library(
+    name = "data_processor_config_factory",
+    srcs = ["data_processor_config_factory.cc"],
+    hdrs = ["data_processor_config_factory.h"],
+    deps = [
+        ":config_registry",
+        ":function_gemma_data_processor_config",
+        ":gemma3_data_processor_config",
+        ":gemma4_data_processor_config",
+        ":generic_data_processor_config",
+        ":qwen3_data_processor_config",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "//runtime/proto:llm_model_type_cc_proto",
+        "//runtime/proto:token_cc_proto",
+        "//runtime/util:litert_status_util",
     ],
 )
 
@@ -102,6 +134,7 @@ cc_library(
     hdrs = ["model_data_processor.h"],
     deps = [
         ":config_registry",
+        ":message_formatter",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",
@@ -114,11 +147,38 @@ cc_library(
 )
 
 cc_library(
+    name = "message_formatter_factory",
+    srcs = ["message_formatter_factory.cc"],
+    hdrs = ["message_formatter_factory.h"],
+    deps = [
+        ":config_registry",
+        ":function_gemma_data_processor_config",
+        ":gemma3_data_processor_config",
+        ":gemma4_data_processor_config",
+        ":generic_data_processor_config",
+        ":message_formatter",
+        ":qwen3_data_processor_config",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:string_view",
+        "@nlohmann_json//:json",
+        "//runtime/components:prompt_template",
+        "//runtime/components/tool_use:fc_tool_format_utils",
+        "//runtime/components/tool_use:parser_utils",
+        "//runtime/components/tool_use:python_tool_format_utils",
+        "//runtime/conversation:io_types",
+        "//runtime/util:litert_status_util",
+    ],
+)
+
+cc_library(
     name = "model_data_processor_factory",
     srcs = ["model_data_processor_factory.cc"],
     hdrs = ["model_data_processor_factory.h"],
     deps = [
         ":config_registry",
+        ":data_processor_config_factory",
         ":function_gemma_data_processor",
         ":function_gemma_data_processor_config",
         ":gemma3_data_processor",
@@ -147,6 +207,7 @@ cc_test(
     srcs = ["model_data_processor_factory_test.cc"],
     data = ["//runtime/components/testdata"],
     deps = [
+        ":data_processor_config_factory",
         ":config_registry",
         ":function_gemma_data_processor_config",
         ":gemma3_data_processor_config",

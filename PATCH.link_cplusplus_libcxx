@@ -1,0 +1,30 @@
+--- build.rs
++++ build.rs
+@@ -1,6 +1,16 @@
+ use std::env;
+ use std::path::PathBuf;
+ 
++fn use_libcxx_from_toolchain() -> bool {
++    env::var_os("CXX")
++        .and_then(|v| v.into_string().ok())
++        .map(|v| {
++            let lower = v.to_ascii_lowercase();
++            lower.contains("clang++") || lower.contains("clang-cl")
++        })
++        .unwrap_or(false)
++}
++
+ fn main() {
+     println!("cargo:rerun-if-changed=build.rs");
+ 
+@@ -20,6 +30,10 @@
+ 
+     match (libstdcxx, libcxx) {
+         (true, false) => println!("cargo:rustc-link-lib=stdc++"),
++        (false, false) if use_libcxx_from_toolchain() => {
++            println!("cargo:warning=link-cplusplus forcing -lc++ because CXX is clang-based");
++            println!("cargo:rustc-link-lib=c++");
++        }
+         (false, true) => println!("cargo:rustc-link-lib=c++"),
+         (false, false) | (true, true) => {
+             // The platform's default.

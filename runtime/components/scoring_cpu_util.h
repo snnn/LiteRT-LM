@@ -21,6 +21,15 @@
 #include "absl/types/span.h"  // from @com_google_absl
 
 namespace litert::lm {
+struct LogLikelihoodResult {
+  std::vector<float> log_likelihoods;
+  std::vector<int> greedy_token_ids;
+};
+
+absl::StatusOr<LogLikelihoodResult> ComputeLogLikelihoodResult(
+    absl::Span<const float> logits, absl::Span<const int> sampled_ids,
+    float temperature);
+
 // Calculates the confidence of the batch given the logits and the sampled ids.
 // Summing the confidence of all batches will give the total perplexity.
 // The logits are expected to be in the shape of [batch_size, vocab_size].

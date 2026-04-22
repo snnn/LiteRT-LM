@@ -12,22 +12,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for litert_lm_model early stopping behavior."""
+"""Tests for LiteRT-LM lm-eval backend behavior."""
 
 import sys
+import types
 from unittest import mock
 
 from absl.testing import absltest
 from absl.testing import parameterized
 
-# Mock out lm_eval and framework objects so imports succeed.
+
+def _register_model(*_aliases):
+  return lambda cls: cls
+
+
+class _TemplateLM:
+
+  def __init__(self):
+    self.cache_hook = mock.MagicMock()
+
+
 mock_lm_eval = mock.MagicMock()
 sys.modules["lm_eval"] = mock_lm_eval
+sys.modules["lm_eval.utils"] = types.SimpleNamespace(
+    get_rolling_token_windows=lambda **_: [],
+    make_disjoint_window=lambda x: x,
+)
 sys.modules["lm_eval.api"] = mock.MagicMock()
-sys.modules["lm_eval.api.model"] = mock.MagicMock()
-sys.modules["lm_eval.api.model"].LM = object
-sys.modules["lm_eval.api.registry"] = mock.MagicMock()
-sys.modules["lm_eval.api.registry"].register_model = lambda x: lambda y: y
+sys.modules["lm_eval.api.model"] = types.SimpleNamespace(TemplateLM=_TemplateLM)
+sys.modules["lm_eval.api.registry"] = types.SimpleNamespace(
+    register_model=_register_model
+)
+sys.modules["lm_eval.models"] = mock.MagicMock()
+sys.modules["lm_eval.models.utils"] = types.SimpleNamespace(
+    normalize_gen_kwargs=lambda kwargs, default_max_gen_toks: {
+        "max_gen_toks": kwargs.get("max_gen_toks", default_max_gen_toks),
+        "until": kwargs.get("until", []),
+        "do_sample": kwargs.get("do_sample", False),
+        "temperature": kwargs.get("temperature", 0.0),
+    }
+)
+
+mock_litert_lm = types.SimpleNamespace(
+    Backend=types.SimpleNamespace(CPU="cpu", GPU="gpu"),
+    Engine=mock.MagicMock(),
+    GenerateConfig=lambda max_output_tokens: types.SimpleNamespace(
+        max_output_tokens=max_output_tokens
+    ),
+)
+sys.modules["litert_lm"] = mock_litert_lm
 
 from litert_lm_eval.runners.lm_eval_runner import litert_lm_model  # pylint: disable=g-import-not-at-top
 
@@ -36,28 +69,19 @@ class LitertLmModelTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    self.enter_context(
-        mock.patch.object(litert_lm_model.litert_lm, "Engine", autospec=True)
-    )
+    mock_litert_lm.Engine.reset_mock()
 
   def test_generate_until_stops_at_earliest_sequence(self):
-    model = litert_lm_model.LitertLmModelRunner(model_path="dummy_path")
+    model = litert_lm_model.LitertLmModelRunner(pretrained="dummy_path")
 
-    # Mock the conversation to return a payload with multiple stop sequences.
-    # Notice that '\n\n' appears before 'User:'.
-    mock_conversation = mock.MagicMock()
-    mock_conversation.send_message.return_value = {
-        "content": [{
-            "type": "text",
-            "text": "The answer is 42.\n\nUser: What is next? Question:",
-        }]
-    }
-
-    # Context manager setup.
-    model.engine.create_conversation.return_value.__enter__.return_value = (
-        mock_conversation
-    )
-    model.engine.create_conversation.return_value.__exit__.return_value = None
+    mock_session = mock.MagicMock()
+    mock_decode_responses = mock.MagicMock()
+    mock_decode_responses.texts = [
+        "The answer is 42.\n\nUser: What is next? Question:"
+    ]
+    mock_session.run_decode.return_value = mock_decode_responses
+    model.engine.create_session.return_value.__enter__.return_value = mock_session
+    model.engine.create_session.return_value.__exit__.return_value = None
 
     class MockRequest:
 
@@ -67,132 +91,43 @@ class LitertLmModelTest(parameterized.TestCase):
             {"until": ["User:", "\n\n", "Question:"]},
         )
 
-    requests = [MockRequest()]
-    res = model.generate_until(requests)
-
-    # "\n\n" came first in the actual text response despite "User:" coming first
-    # in the until array. So it should correctly split right at "\n\n".
+    res = model.generate_until([MockRequest()], disable_tqdm=True)
     self.assertEqual(["The answer is 42."], res)
 
-  def test_loglikelihood_is_greedy_true(self):
-    model = litert_lm_model.LitertLmModelRunner(model_path="dummy_path")
+  def test_loglikelihood_tokens_groups_shared_context(self):
+    model = litert_lm_model.LitertLmModelRunner(pretrained="dummy_path")
+    model.cache_hook = mock.MagicMock()
 
-    # Mock the session for scoring.
     mock_session = mock.MagicMock()
-    mock_scoring_responses = mock.MagicMock()
-    mock_scoring_responses.scores = [-1.5]
-    mock_session.run_text_scoring.return_value = mock_scoring_responses
-    model.engine.create_session.return_value.__enter__.return_value = (
-        mock_session
-    )
+    scoring = mock.MagicMock()
+    scoring.scores = [-1.5, -3.0, -0.5]
+    scoring.greedy_token_ids = [[20], [99], [20]]
+    mock_session.run_token_scoring.return_value = scoring
+    model.engine.create_session.return_value.__enter__.return_value = mock_session
     model.engine.create_session.return_value.__exit__.return_value = None
-
-    # Mock the conversation for greedy check.
-    mock_conversation = mock.MagicMock()
-    mock_conversation.send_message.return_value = {
-        "content": [{
-            "type": "text",
-            "text": " world and some more text",
-        }]
-    }
-    model.engine.create_conversation.return_value.__enter__.return_value = (
-        mock_conversation
-    )
-    model.engine.create_conversation.return_value.__exit__.return_value = None
-
-    class MockRequest:
-
-      def __init__(self):
-        self.args = ("hello", " world")
-
-    requests = [MockRequest()]
-    res = model.loglikelihood(requests)
-
-    # Generated text starts with " world", so is_greedy=True.
-    self.assertEqual([(-1.5, True)], res)
-
-  def test_loglikelihood_is_greedy_false(self):
-    model = litert_lm_model.LitertLmModelRunner(model_path="dummy_path")
-
-    # Mock the session for scoring.
-    mock_session = mock.MagicMock()
-    mock_scoring_responses = mock.MagicMock()
-    mock_scoring_responses.scores = [-3.0]
-    mock_session.run_text_scoring.return_value = mock_scoring_responses
-    model.engine.create_session.return_value.__enter__.return_value = (
-        mock_session
-    )
-    model.engine.create_session.return_value.__exit__.return_value = None
-
-    # Mock the conversation for greedy check.
-    mock_conversation = mock.MagicMock()
-    mock_conversation.send_message.return_value = {
-        "content": [{
-            "type": "text",
-            "text": " everyone",
-        }]
-    }
-    model.engine.create_conversation.return_value.__enter__.return_value = (
-        mock_conversation
-    )
-    model.engine.create_conversation.return_value.__exit__.return_value = None
-
-    class MockRequest:
-
-      def __init__(self):
-        self.args = ("hello", " world")
-
-    requests = [MockRequest()]
-    res = model.loglikelihood(requests)
-
-    # Generated text does not start with " world", so is_greedy=False.
-    self.assertEqual([(-3.0, False)], res)
-
-  def test_loglikelihood_different_contexts_caches_greedy_check(self):
-    model = litert_lm_model.LitertLmModelRunner(model_path="dummy_path")
-
-    # Mock the session for scoring.
-    mock_session = mock.MagicMock()
-    mock_scoring_responses = mock.MagicMock()
-    mock_scoring_responses.scores = [-1.5]
-    mock_session.run_text_scoring.return_value = mock_scoring_responses
-    model.engine.create_session.return_value.__enter__.return_value = (
-        mock_session
-    )
-
-    # Mock the conversation for greedy check.
-    mock_conversation = mock.MagicMock()
-    mock_conversation.send_message.return_value = {
-        "content": [{
-            "type": "text",
-            "text": " world",
-        }]
-    }
-    model.engine.create_conversation.return_value.__enter__.return_value = (
-        mock_conversation
-    )
-
-    class MockRequest:
-
-      def __init__(self, context, continuation):
-        self.args = (context, continuation)
 
     requests = [
-        MockRequest("hello", " world"),
-        MockRequest("hello", " everyone"),
-        MockRequest("hello different", " world"),
+      (("hello", " world"), [10], [20]),
+      (("hello", " everyone"), [10], [30]),
+      (("different", " world"), [11], [20]),
     ]
 
-    res = model.loglikelihood(requests)
+    res = model._loglikelihood_tokens(requests, disable_tqdm=True)
 
-    # Only 2 unique contexts, so send_message should be called exactly twice.
-    self.assertEqual(2, mock_conversation.send_message.call_count)
-    self.assertLen(res, 3)
-    # The returned greedy status should match the mocked returned " world"
-    # string.
-    self.assertEqual((-1.5, True), res[0])
-    self.assertEqual((-1.5, False), res[1])
-    self.assertEqual((-1.5, True), res[2])
+    self.assertEqual([(-1.5, True), (-3.0, False), (-0.5, True)], res)
+    self.assertEqual(2, mock_session.run_prefill_token_ids.call_count)
+    self.assertEqual(2, mock_session.run_token_scoring.call_count)
+    mock_session.run_prefill_token_ids.assert_any_call([10])
+    mock_session.run_prefill_token_ids.assert_any_call([11])
+    mock_session.run_token_scoring.assert_any_call([[20], [30]])
+    mock_session.run_token_scoring.assert_any_call([[20]])
+
+  def test_loglikelihood_tokens_requires_raw_prompt_mode(self):
+    model = litert_lm_model.LitertLmModelRunner(
+        pretrained="dummy_path", prompt_mode="bundle"
+    )
+    with self.assertRaises(NotImplementedError):
+      model._loglikelihood_tokens([], disable_tqdm=True)
 
 
 if __name__ == "__main__":

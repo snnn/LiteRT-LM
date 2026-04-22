@@ -73,5 +73,21 @@ TEST(ScoringCpuUtilTest, ComputeLogLikelihood_BatchSize2_OneStreamEnded) {
       (*batchconfidence)[0],
       testing::FloatNear(std::log(exp(0.3f) / (2 + std::exp(0.3f))), 1e-6f));
 }
+
+TEST(ScoringCpuUtilTest, ComputeLogLikelihoodResult_ReturnsGreedyTokenIds) {
+  std::vector<float> logits = {0.0, 0.0, 0.3, 0.0, 0.7, 0.0};
+  std::vector<int> sampled_ids = {2, 1};
+  auto result = ComputeLogLikelihoodResult(absl::MakeConstSpan(logits),
+                                           absl::MakeConstSpan(sampled_ids),
+                                           /*temperature=*/1.0);
+  ASSERT_OK(result);
+  EXPECT_THAT(result->greedy_token_ids, testing::ElementsAre(2, 1));
+  EXPECT_THAT(
+      result->log_likelihoods,
+      testing::ElementsAre(
+          testing::FloatNear(std::log(exp(0.3f) / (2 + std::exp(0.3f))), 1e-6f),
+          testing::FloatNear(std::log(exp(0.7f) / (2 + std::exp(0.7f))),
+                             1e-6f)));
+}
 }  // namespace
 }  // namespace litert::lm

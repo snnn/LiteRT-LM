@@ -111,6 +111,10 @@ std::ostream& operator<<(std::ostream& os, const AdvancedSettings& settings) {
   } else {
     os << "hint_kernel_batch_size: Not set\n";
   }
+  os << "dump_first_decode_tensors_dir: "
+     << settings.dump_first_decode_tensors_dir << "\n";
+  os << "dump_first_decode_profile_path: "
+     << settings.dump_first_decode_profile_path << "\n";
   return os;
 }
 

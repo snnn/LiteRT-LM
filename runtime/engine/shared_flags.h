@@ -43,6 +43,7 @@ ABSL_DECLARE_FLAG(bool, report_peak_memory_footprint);
 ABSL_DECLARE_FLAG(bool, force_f32);
 ABSL_DECLARE_FLAG(bool, multi_turns);
 ABSL_DECLARE_FLAG(int, num_cpu_threads);
+ABSL_DECLARE_FLAG(std::string, cache_dir);
 ABSL_DECLARE_FLAG(bool, gpu_external_tensor_mode);
 ABSL_DECLARE_FLAG(bool, configure_magic_numbers);
 ABSL_DECLARE_FLAG(bool, verify_magic_numbers);
@@ -66,5 +67,7 @@ ABSL_DECLARE_FLAG(bool, cache_compiled_shaders_only);
 ABSL_DECLARE_FLAG(std::string, constraint_regex);
 ABSL_DECLARE_FLAG(bool, use_submodel);
 ABSL_DECLARE_FLAG(bool, enable_speculative_decoding);
+ABSL_DECLARE_FLAG(std::string, dump_first_decode_tensors_dir);
+ABSL_DECLARE_FLAG(std::string, dump_first_decode_profile_path);
 
 #endif  // THIRD_PARTY_ODML_LITERT_LM_RUNTIME_ENGINE_SHARED_FLAGS_H_

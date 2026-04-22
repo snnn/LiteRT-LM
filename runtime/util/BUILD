@@ -668,10 +668,24 @@ cc_test(
 )
 
 cc_library(
+    name = "prompt_template_utils",
+    srcs = ["prompt_template_utils.cc"],
+    hdrs = ["prompt_template_utils.h"],
+    deps = [
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "//runtime/proto:llm_metadata_cc_proto",
+        "//runtime/proto:llm_model_type_cc_proto",
+    ],
+)
+
+cc_library(
     name = "model_type_utils",
     srcs = ["model_type_utils.cc"],
     hdrs = ["model_type_utils.h"],
     deps = [
+        ":prompt_template_utils",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -688,6 +702,7 @@ cc_test(
     srcs = ["model_type_utils_test.cc"],
     deps = [
         ":model_type_utils",
+        ":prompt_template_utils",
         "@com_google_googletest//:gtest_main",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:string_view",

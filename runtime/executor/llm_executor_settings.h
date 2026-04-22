@@ -243,6 +243,13 @@ struct AdvancedSettings {
   // OSS models), we would set this flag to 4 to ensure smooth UI.
   std::optional<int> hint_kernel_batch_size;
 
+  // If not empty, dump the first real decode-step inputs/outputs under this
+  // directory for standalone replay/debugging.
+  std::string dump_first_decode_tensors_dir;
+
+  // If not empty, dump the first real decode-step LiteRT profile summary to
+  // this file path and raw profiler events to "<path>.events.tsv".
+  std::string dump_first_decode_profile_path;
   bool operator==(const AdvancedSettings& other) const {
     return prefill_batch_sizes == other.prefill_batch_sizes &&
            num_output_candidates == other.num_output_candidates &&
@@ -271,7 +278,11 @@ struct AdvancedSettings {
            gpu_context_low_priority == other.gpu_context_low_priority &&
            enable_speculative_decoding == other.enable_speculative_decoding &&
            disable_delegate_clustering == other.disable_delegate_clustering &&
-           hint_kernel_batch_size == other.hint_kernel_batch_size;
+           hint_kernel_batch_size == other.hint_kernel_batch_size &&
+           dump_first_decode_tensors_dir ==
+               other.dump_first_decode_tensors_dir &&
+           dump_first_decode_profile_path ==
+               other.dump_first_decode_profile_path;
   }
 };
 std::ostream& operator<<(std::ostream& os, const AdvancedSettings& settings);

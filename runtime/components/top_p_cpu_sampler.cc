@@ -38,6 +38,45 @@
 namespace litert::lm {
 namespace {
 
+struct SamplingConfig {
+  int k;
+  float p;
+  float temperature;
+};
+
+absl::StatusOr<SamplingConfig> ResolveSamplingConfig(
+    const proto::SamplerParameters& sampler_params) {
+  switch (sampler_params.type()) {
+    case proto::SamplerParameters::GREEDY:
+      return SamplingConfig{
+          .k = 1,
+          .p = 1.0f,
+          .temperature = 0.0f,
+      };
+    case proto::SamplerParameters::TOP_K:
+      return SamplingConfig{
+          .k = sampler_params.k(),
+          .p = 1.0f,
+          .temperature = sampler_params.temperature(),
+      };
+    case proto::SamplerParameters::TOP_P:
+      return SamplingConfig{
+          .k = sampler_params.k(),
+          .p = sampler_params.p(),
+          .temperature = sampler_params.temperature(),
+      };
+    case proto::SamplerParameters::TYPE_UNSPECIFIED:
+      return SamplingConfig{
+          .k = sampler_params.k(),
+          .p = sampler_params.p(),
+          .temperature = sampler_params.temperature(),
+      };
+    default:
+      return absl::UnimplementedError(absl::StrCat(
+          "Sampler type: ", sampler_params.type(), " not implemented yet."));
+  }
+}
+
 absl::Status ValidateTensor(const TensorBuffer& tensor, int max_num_dims,
                             int batch_size, const std::string& tensor_name) {
   LITERT_ASSIGN_OR_RETURN(auto tensor_type, tensor.TensorType());
@@ -168,9 +207,10 @@ absl::Status TopPSampler::SampleToIdAndScoreBuffer(
 absl::Status TopPSampler::UpdateConfig(
     const proto::SamplerParameters& sampler_params, int batch_size,
     std::shared_ptr<std::default_random_engine> rand_gen) {
-  k_ = sampler_params.k();
-  p_ = sampler_params.p();
-  temperature_ = sampler_params.temperature();
+  LITERT_ASSIGN_OR_RETURN(auto config, ResolveSamplingConfig(sampler_params));
+  k_ = config.k;
+  p_ = config.p;
+  temperature_ = config.temperature;
   batch_size_ = batch_size;
   if (rand_gen != nullptr) {
     generator_ = rand_gen;

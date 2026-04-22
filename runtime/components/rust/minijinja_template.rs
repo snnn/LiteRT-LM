@@ -56,6 +56,8 @@ struct ChatTemplateInputs {
     #[serde(default)]
     add_generation_prompt: bool,
     #[serde(default)]
+    continue_final_message: bool,
+    #[serde(default)]
     extra_context: Value,
     #[serde(default)]
     now: Option<i64>,
@@ -96,6 +98,7 @@ fn detect_capabilities(source: &str) -> ffi::ChatTemplateCapabilities {
             let ctx = json!({
                 "messages": [msg],
                 "add_generation_prompt": false,
+                "continue_final_message": false,
                 "tools": [],
                 "extra_context": {}
             });
@@ -273,6 +276,10 @@ impl MinijinjaTemplate {
         }
 
         ctx.insert("add_generation_prompt".to_string(), Value::Bool(inputs.add_generation_prompt));
+        ctx.insert(
+            "continue_final_message".to_string(),
+            Value::Bool(inputs.continue_final_message),
+        );
 
         if let Some(now) = inputs.now {
             ctx.insert("now".to_string(), Value::Number(serde_json::Number::from(now)));
@@ -306,6 +313,7 @@ mod tests {
             "messages": [{"role": "user", "content": "World"}],
             "tools": null,
             "add_generation_prompt": false,
+            "continue_final_message": false,
             "extra_context": {}
         }"#;
 
@@ -346,6 +354,7 @@ mod tests {
             "messages": [],
             "tools": null,
             "add_generation_prompt": false,
+            "continue_final_message": false,
             "extra_context": {},
             "now": 1735689600
         });
@@ -359,6 +368,7 @@ mod tests {
             "messages": [],
             "tools": null,
             "add_generation_prompt": false,
+            "continue_final_message": false,
             "extra_context": {}
         });
         let res_no_now = wrapper.apply(inputs_no_now.to_string());
@@ -377,6 +387,7 @@ mod tests {
             "messages": [],
             "tools": null,
             "add_generation_prompt": false,
+            "continue_final_message": false,
             "extra_context": {"data": {"a": 1, "b": 2}}
         });
         let res_obj = wrapper.apply(inputs_obj.to_string());
@@ -388,6 +399,7 @@ mod tests {
             "messages": [],
             "tools": null,
             "add_generation_prompt": false,
+            "continue_final_message": false,
             "extra_context": {"data": [1, 2]}
         });
         let res_list = wrapper.apply(inputs_list.to_string());
@@ -406,6 +418,7 @@ mod tests {
             "messages": [],
             "tools": null,
             "add_generation_prompt": false,
+            "continue_final_message": false,
             "extra_context": {"existing": 123}
         });
         let res = wrapper.apply(inputs.to_string());
@@ -422,6 +435,7 @@ mod tests {
             "messages": [],
             "tools": null,
             "add_generation_prompt": false,
+            "continue_final_message": false,
             "extra_context": {}
         });
         let res = wrapper.apply(inputs.to_string());

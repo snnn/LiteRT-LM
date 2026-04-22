@@ -1,0 +1,142 @@
+diff --git a/litert/runtime/compiled_model.cc b/litert/runtime/compiled_model.cc
+index 4e7c2c9..5d5dcf1 100644
+--- a/litert/runtime/compiled_model.cc
++++ b/litert/runtime/compiled_model.cc
+@@ -971,7 +971,8 @@ LiteRtCompiledModelT::GetTensorBufferRequirements(const TfLiteTensor* tensor) {
+   LITERT_RETURN_IF_ERROR(LiteRtCreateTensorBufferRequirements(
+       /*num_supported_tensor_buffer_types=*/1, cpu_buffer_type, tensor->bytes,
+       /*num_strides=*/1, cpu_buffer_strides, &litert_cpu_buffer_requirements));
+   cpu_buffer_requirements_[tensor_id] =
+       LiteRtTensorBufferRequirementsPtr(litert_cpu_buffer_requirements);
+-  return litert_cpu_buffer_requirements;
++  return static_cast<const LiteRtTensorBufferRequirementsT*>(
++      litert_cpu_buffer_requirements);
+ }
+
+diff --git a/litert/runtime/accelerators/auto_registration.cc b/litert/runtime/accelerators/auto_registration.cc
+index dbdfa58e..63569bf6 100644
+--- a/litert/runtime/accelerators/auto_registration.cc
++++ b/litert/runtime/accelerators/auto_registration.cc
+@@ -15,6 +15,7 @@
+ #include "litert/runtime/accelerators/auto_registration.h"
+ 
+ #include <cstddef>
++#include <cstdlib>
+ #include <filesystem>  // NOLINT
+ #include <string>
+ #include <utility>
+@@ -180,6 +181,15 @@ Expected<void> TriggerAcceleratorAutomaticRegistration(
+ #define SO_EXT ".so"
+ #endif
+ #if !defined(LITERT_DISABLE_GPU)
++  const char* disable_gpu_auto_registration =
++      std::getenv("LITERT_DISABLE_GPU_AUTO_REGISTRATION");
++  if (disable_gpu_auto_registration != nullptr &&
++      std::string(disable_gpu_auto_registration) == "1") {
++    LITERT_LOG(
++        LITERT_INFO,
++        "GPU accelerator auto-registration disabled by "
++        "LITERT_DISABLE_GPU_AUTO_REGISTRATION=1.");
++  } else {
+   static constexpr absl::string_view kGpuAcceleratorLibs[] = {
+       "libLiteRtGpuAccelerator" SO_EXT,
+ 
+@@ -265,6 +275,7 @@ Expected<void> TriggerAcceleratorAutomaticRegistration(
+     LITERT_LOG(LITERT_WARNING,
+                "GPU accelerator could not be loaded and registered.");
+   }
++  }
+ #else
+   LITERT_LOG(LITERT_VERBOSE, "GPU accelerator registration disabled.");
+ #endif
+
+diff --git a/litert/tools/benchmark_litert_model.cc b/litert/tools/benchmark_litert_model.cc
+index fde9c940..4fa5eb0c 100644
+--- a/litert/tools/benchmark_litert_model.cc
++++ b/litert/tools/benchmark_litert_model.cc
+@@ -53,7 +53,7 @@ using ::litert::Options;
+ using ::litert::RuntimeOptions;
+ using ::litert::TensorBuffer;
+ 
+-Options CreateCompiledModelOptions(const BenchmarkParams& params) {
++Expected<Options> CreateCompiledModelOptions(const BenchmarkParams& params) {
+   auto use_gpu = params.Get<bool>("use_gpu");
+   auto use_npu = params.Get<bool>("use_npu");
+   auto use_cpu = params.Get<bool>("use_cpu");
+@@ -66,14 +66,13 @@ Options CreateCompiledModelOptions(const BenchmarkParams& params) {
+   auto enable_weight_sharing = params.Get<bool>("enable_weight_sharing");
+   auto mediatek_nerun_pilot_version =
+       params.Get<std::string>("mediatek_nerun_pilot_version");
+-  LITERT_ASSIGN_OR_ABORT(Options compilation_options,
+-                         litert::Options::Create());
++  LITERT_ASSIGN_OR_RETURN(Options compilation_options,
++                          litert::Options::Create());
+ 
+   if (use_cpu && require_full_delegation) {
+-    LITERT_LOG(
+-        LITERT_ERROR,
+-        "Requesting full delegation and CPU acceleration are incompatible.");
+-    std::abort();
++    return Error(kLiteRtStatusErrorInvalidArgument,
++                 "Requesting full delegation and CPU acceleration are "
++                 "incompatible.");
+   }
+ 
+   HwAcceleratorSet hardware_accelerators(HwAccelerators::kNone);
+@@ -213,7 +212,9 @@ TfLiteStatus BenchmarkLiteRtModel::Init() {
+       AsTfLiteStatus(_ << "Failed to create litert environment."));
+   environment_ = std::make_unique<litert::Environment>(std::move(env_result));
+ 
+-  auto compilation_options = CreateCompiledModelOptions(params_);
++  LITERT_ASSIGN_OR_RETURN(
++      auto compilation_options, CreateCompiledModelOptions(params_),
++      AsTfLiteStatus(_ << "Failed to create compiled model options."));
+   LITERT_ASSIGN_OR_RETURN(auto compiled_model_result,
+                           litert::CompiledModel::Create(*environment_, *model_,
+                                                         compilation_options),
+
+diff --git a/tflite/graph_info.cc b/tflite/graph_info.cc
+index 336d05d4..bb9abd4a 100644
+--- a/tflite/graph_info.cc
++++ b/tflite/graph_info.cc
+@@ -61,7 +61,7 @@ class PartitionGraphIntoIndependentNodeSubsetsImpl {
+   }
+ 
+   // Actually partition the graph.
+-  void Partition() {
++  TfLiteStatus Partition() {
+     // Initialize here to make Partition() re-entrant.
+     node_subsets_->clear();
+     tensor_epochs_.clear();
+@@ -104,6 +104,10 @@ class PartitionGraphIntoIndependentNodeSubsetsImpl {
+         // This happens when an input of subgraph is also an output of subgraph.
+         continue;
+       }
++      if (output_epoch < 0 ||
++          output_epoch >= static_cast<int>(node_subsets_->size())) {
++        return kTfLiteError;
++      }
+       NodeSubset& output_subset = (*node_subsets_)[output_epoch];
+       output_subset.output_tensors.push_back(output_index);
+     }
+@@ -115,6 +119,7 @@ class PartitionGraphIntoIndependentNodeSubsetsImpl {
+       Uniquefy(&node_subset.input_tensors);
+       Uniquefy(&node_subset.output_tensors);
+     }
++    return kTfLiteOk;
+   }
+ 
+  private:
+@@ -287,11 +292,10 @@ TfLiteStatus PartitionGraphIntoIndependentNodeSubsets(
+       }
+     }
+   }
+-  PartitionGraphIntoIndependentNodeSubsetsImpl(
++  return PartitionGraphIntoIndependentNodeSubsetsImpl(
+       info, nodes_to_partition, node_subsets, greedily, *control_edges,
+       disable_node_fusion)
+       .Partition();
+-  return kTfLiteOk;
+ }
+ 
+ }  // namespace tflite

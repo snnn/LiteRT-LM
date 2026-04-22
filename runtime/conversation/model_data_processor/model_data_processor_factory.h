@@ -25,7 +25,6 @@
 #include "runtime/conversation/io_types.h"
 #include "runtime/conversation/model_data_processor/config_registry.h"
 #include "runtime/conversation/model_data_processor/model_data_processor.h"
-#include "runtime/proto/llm_model_type.pb.h"
 
 namespace litert::lm {
 
@@ -44,12 +43,6 @@ absl::StatusOr<std::unique_ptr<ModelDataProcessor>> CreateModelDataProcessor(
     const std::vector<std::vector<int>>& stop_token_ids = {},
     bool enable_constrained_decoding = false,
     PromptTemplateCapabilities capabilities = PromptTemplateCapabilities());
-
-// Creates data processor config from the given LlmModelType. The
-// DataProcessorConfig has default values if the corresponding fields are not
-// set in the LlmModelType.
-absl::StatusOr<DataProcessorConfig> CreateDataProcessorConfigFromLlmModelType(
-    const proto::LlmModelType& llm_model_type);
 
 }  // namespace litert::lm
 

@@ -28,7 +28,7 @@
 
 namespace litert::lm {
 
-absl::StatusOr<std::vector<float>> ComputeLogLikelihood(
+absl::StatusOr<LogLikelihoodResult> ComputeLogLikelihoodResult(
     absl::Span<const float> logits, absl::Span<const int> sampled_ids,
     float temperature) {
   const int batch_size = sampled_ids.size();
@@ -52,21 +52,37 @@ absl::StatusOr<std::vector<float>> ComputeLogLikelihood(
   ASSIGN_OR_RETURN(auto all_probabilities,
                    Softmax(logits, flat_all_token_ids, temperature, batch_size,
                            /*sequence_size=*/1, all_logit_values));
-  std::vector<float> batch_confidence(batch_size);
+  LogLikelihoodResult result = {
+      .log_likelihoods = std::vector<float>(batch_size),
+      .greedy_token_ids = std::vector<int>(batch_size),
+  };
   for (int b = 0; b < batch_size; ++b) {
+    const int offset = b * vocab_size;
+    auto max_iterator = std::max_element(logits.begin() + offset,
+                                         logits.begin() + offset + vocab_size);
+    result.greedy_token_ids[b] =
+        std::distance(logits.begin() + offset, max_iterator);
     if (sampled_ids[b] >= 0 && sampled_ids[b] < vocab_size) {
       // Find the index of the sampled token id in the flat_all_token_ids array
       auto it = std::find(all_token_ids[b].begin(), all_token_ids[b].end(),
                           sampled_ids[b]);
       if (it != all_token_ids[b].end()) {
         int index_in_topk = std::distance(all_token_ids[b].begin(), it);
-        batch_confidence[b] = std::log(all_probabilities[b][index_in_topk]);
+        result.log_likelihoods[b] = std::log(all_probabilities[b][index_in_topk]);
       } else {
         return absl::InternalError("Sampled ID not found in top-k tokens");
       }
     }
   }
-  return batch_confidence;
+  return result;
+}
+
+absl::StatusOr<std::vector<float>> ComputeLogLikelihood(
+    absl::Span<const float> logits, absl::Span<const int> sampled_ids,
+    float temperature) {
+  ASSIGN_OR_RETURN(auto result,
+                   ComputeLogLikelihoodResult(logits, sampled_ids, temperature));
+  return result.log_likelihoods;
 }
 
 }  // namespace litert::lm

@@ -2,10 +2,10 @@
 
 workspace(name = "litert_lm")
 
-# UPDATED = 2026-04-14
-LITERT_REF = "472d1c0f6cc0cc89ac968b2d5394ebb66195e1d4"
+# UPDATED = 2026-04-20
+LITERT_REF = "e8a6f4065149492402641d31119c092733b472ad"
 
-LITERT_SHA256 = "52b9041d0b0840360e3a4ad6212f454be58822ccd5f9fc384d1ff7841928e685"
+LITERT_SHA256 = "c47c4cf0a921d45d0d3dc7419c8b4c339098d2ed66e220b49b443bd3f3f09782"
 
 TENSORFLOW_REF = "5cdb51d9c84e3194235e49a0b8e72da2df75bf1e"
 
@@ -291,6 +291,12 @@ load("@rules_rust//rust/platform:triple_mappings.bzl", "SUPPORTED_PLATFORM_TRIPL
 crates_repository(
     name = "crate_index",
     annotations = {
+        "link-cplusplus": [
+            crate.annotation(
+                crate_features = ["libc++"],
+                patches = ["@//:PATCH.link_cplusplus_libcxx"],
+            ),
+        ],
         "llguidance": [
             crate.annotation(
                 additive_build_file = "@//:BUILD.llguidance",
@@ -374,13 +380,15 @@ http_archive(
 
 http_archive(
     name = "litert",
+    patches = ["@//:PATCH.litert_xnnpack_qint4_compat"],
+    patch_args = ["-p1"],
     patch_cmds = [
         # Replace @//third_party with @litert//third_party in files under third_party/.
         "sed -i -e 's|\"@//third_party/|\"@litert//third_party/|g' third_party/*/*",
     ],
     sha256 = LITERT_SHA256,
     strip_prefix = "LiteRT-" + LITERT_REF,
-    url = "https://github.com/google-ai-edge/LiteRT/archive/" + LITERT_REF + ".tar.gz",
+    url = "https://github.com/snnn/LiteRT/archive/" + LITERT_REF + ".tar.gz",
 )
 
 http_archive(

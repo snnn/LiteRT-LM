@@ -765,6 +765,51 @@ TEST_F(SessionBasicTest, RunTextScoringMultipleTargetTextSuccess) {
   EXPECT_EQ(responses.GetTokenLengths()->size(), 2);
 }
 
+TEST_F(SessionBasicTest, RunTokenIdScoringMultipleTargetTextSuccess) {
+  const std::vector<std::vector<int>> stop_token_ids = {{2294}};
+  SessionConfig session_config = SessionConfig::CreateDefault();
+  session_config.GetMutableSamplerParams() = sampler_params_;
+  session_config.GetMutableStopTokenIds() = stop_token_ids;
+  session_config.SetStartTokenId(2);
+  session_config.SetSamplerBackend(Backend::CPU);
+  ASSERT_OK_AND_ASSIGN(
+      auto executor,
+      CreateFakeLlmExecutor(
+          /*prefill_tokens=*/{{2, 90, 547, 58, 735, 210, 466, 2294}},
+          /*decode_tokens=*/{
+              {224, 224},
+              {24, 24},
+              {8, 8},
+              {66, 66},
+              {246, 246},
+              {18, 18},
+              {2295, 2295},
+              {2294, 2294}}));
+  auto session = SessionBasic::Create(
+      executor.get(), tokenizer_.get(), /*vision_executor=*/nullptr,
+      /*audio_executor=*/nullptr, session_config, std::nullopt,
+      worker_thread_pool_.get());
+  std::vector<InputData> inputs;
+  inputs.emplace_back(InputText(std::string("Hello World!")));
+  ASSERT_OK((*session)->RunPrefill(inputs));
+  std::vector<TokenIds> target_token_ids = {
+      {224, 24, 8, 66, 246, 18, 2295, 2294},
+      {224, 24, 8, 66, 246, 18, 2295, 2294},
+  };
+  ASSERT_OK_AND_ASSIGN(
+      auto responses,
+      (*session)->RunTokenIdScoring(target_token_ids,
+                                    /*store_token_lengths=*/true));
+  EXPECT_THAT(responses.GetScores(), testing::SizeIs(2));
+  EXPECT_THAT(responses.GetTokenScores(),
+              testing::Optional(testing::SizeIs(2)));
+  EXPECT_THAT(
+      responses.GetGreedyTokenIds(),
+      testing::Optional(testing::Each(testing::SizeIs(8))));
+  ASSERT_TRUE(responses.GetTokenLengths().has_value());
+  EXPECT_EQ(responses.GetTokenLengths()->size(), 2);
+}
+
 TEST_F(SessionBasicTest,
        RunTextScoringMultipleTargetTextTemporarilyOverridesOutputHeads) {
   const std::vector<std::vector<int>> stop_token_ids = {{2294}};
@@ -1710,6 +1755,49 @@ TEST_F(SessionBasicTest,
   inputs.emplace_back(InputText("Hello World!"));
   EXPECT_OK((*session)->RunPrefill(inputs));
   EXPECT_EQ((*session)->GetBenchmarkInfo()->GetTotalPrefillTurns(), 1);
+}
+
+TEST_F(SessionBasicTest,
+       TestBenchmarkModeDecodeIgnoresShortAssistantScaffold) {
+  const std::vector<std::vector<int>> stop_token_ids = {{2294}};
+  SessionConfig session_config = SessionConfig::CreateDefault();
+  session_config.GetMutableSamplerParams() = sampler_params_;
+  session_config.GetMutableStopTokenIds() = stop_token_ids;
+  session_config.SetStartTokenId(2);
+  session_config.SetSamplerBackend(Backend::CPU);
+  session_config.SetApplyPromptTemplateInSession(true);
+  session_config.GetMutablePromptTemplates().mutable_user()->set_suffix("!");
+  session_config.GetMutablePromptTemplates().mutable_model()->set_prefix("");
+
+  ASSERT_OK_AND_ASSIGN(auto prompt_ids,
+                       tokenizer_->TextToTokenIds("Hello World!"));
+  ASSERT_GE(prompt_ids.size(), 4);
+  prompt_ids.resize(4);
+  ASSERT_OK_AND_ASSIGN(auto scaffold_ids, tokenizer_->TextToTokenIds("!"));
+  ASSERT_FALSE(scaffold_ids.empty());
+
+  ASSERT_OK_AND_ASSIGN(
+      auto executor,
+      CreateFakeLlmExecutor(
+          /*prefill_tokens=*/{prompt_ids, scaffold_ids},
+          /*decode_tokens=*/{{2294}}));
+
+  proto::BenchmarkParams benchmark_params;
+  benchmark_params.set_num_prefill_tokens(4);
+  benchmark_params.set_num_decode_tokens(1);
+  BenchmarkInfo benchmark_info(benchmark_params);
+
+  auto session = SessionBasic::Create(
+      executor.get(), tokenizer_.get(), /*vision_executor=*/nullptr,
+      /*audio_executor=*/nullptr, session_config, benchmark_info,
+      worker_thread_pool_.get());
+  ASSERT_OK(session);
+
+  std::vector<InputData> inputs;
+  inputs.emplace_back(InputText("Hello World!"));
+  EXPECT_OK((*session)->RunPrefill(inputs));
+  ASSERT_OK_AND_ASSIGN(auto responses, (*session)->RunDecode());
+  EXPECT_THAT(responses.GetTexts(), testing::IsEmpty());
 }
 
 TEST_F(SessionBasicTest,

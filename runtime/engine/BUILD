@@ -224,8 +224,17 @@ cc_binary(
         "//runtime/conversation:io_types",
         "//runtime/executor:executor_settings_base",
         "//runtime/util:litert_status_util",
-        "//runtime/util:rs_zlib_shim",
-    ],
+    ] + select({
+        "@platforms//os:linux": [
+            "//runtime/util:rs_zlib_shim",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "@litert//litert:litert_link_capi_so": [
+            "@litert//litert/cc:litert_api_with_dynamic_runtime",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 cc_binary(
@@ -271,8 +280,17 @@ cc_binary(
         "//runtime/proto:litert_lm_metrics_cc_proto",
         "//runtime/util:litert_status_util",
         "//runtime/util:metrics_util",
-        "//runtime/util:rs_zlib_shim",
     ] + select({
+        "@platforms//os:linux": [
+            "//runtime/util:rs_zlib_shim",
+        ],
+        "//conditions:default": [],
+    }) + select({
+        "@litert//litert:litert_link_capi_so": [
+            "@litert//litert/cc:litert_api_with_dynamic_runtime",
+        ],
+        "//conditions:default": [],
+    }) + select({
         "@platforms//os:windows": [
         ],
         "//conditions:default": [

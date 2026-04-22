@@ -46,6 +46,7 @@
 #include "nanobind_json/nanobind_json.hpp"  // from @nanobind_json  // IWYU pragma: keep
 #include "litert/c/internal/litert_logging.h"  // from @litert
 #include "runtime/components/tokenizer.h"
+#include "runtime/conversation/prompt_api.h"
 #include "runtime/conversation/conversation.h"
 #include "runtime/conversation/io_types.h"
 #include "runtime/engine/engine.h"
@@ -54,6 +55,7 @@
 #include "runtime/engine/io_types.h"
 #include "runtime/executor/executor_settings_base.h"
 #include "runtime/executor/llm_executor_settings.h"
+#include "runtime/proto/sampler_params.pb.h"
 #include "runtime/proto/token.pb.h"
 #include "tflite/logger.h"  // from @litert
 #include "tflite/minimal_logging.h"  // from @litert
@@ -229,7 +231,102 @@ nb::object ToPyResponses(const Responses& responses) {
                                             : responses.GetTexts();
   auto scores = responses.GetScores();
   auto token_lengths = responses.GetTokenLengths().value_or(std::vector<int>());
-  return py_responses_class(texts, scores, token_lengths);
+  auto greedy_token_ids =
+      responses.GetGreedyTokenIds().value_or(std::vector<std::vector<int>>());
+  return py_responses_class(texts, scores, token_lengths, greedy_token_ids);
+}
+
+template <typename T>
+std::optional<T> GetOptionalAttr(const nb::handle& obj, const char* name) {
+  if (obj.is_none() || !nb::hasattr(obj, name)) {
+    return std::nullopt;
+  }
+  nb::object value = nb::borrow<nb::object>(obj.attr(name));
+  if (value.is_none()) {
+    return std::nullopt;
+  }
+  return nb::cast<T>(value);
+}
+
+PromptApiConfig CreatePromptApiConfigFromEngine(const Engine& engine) {
+  const auto& settings = engine.GetEngineSettings();
+  if (!settings.GetLlmMetadata().has_value()) {
+    throw std::runtime_error("Engine metadata is not available.");
+  }
+  const auto& metadata = *settings.GetLlmMetadata();
+  if (!metadata.has_llm_model_type()) {
+    throw std::runtime_error("Engine metadata is missing llm_model_type.");
+  }
+  return VALUE_OR_THROW(CreatePromptApiConfig(
+      metadata, metadata.llm_model_type()));
+}
+
+SessionConfig CreateSessionConfigFromPython(const nb::handle& config,
+                                            bool apply_prompt_template) {
+  auto session_config = SessionConfig::CreateDefault();
+  session_config.SetApplyPromptTemplateInSession(apply_prompt_template);
+  if (config.is_none()) {
+    return session_config;
+  }
+
+  if (auto value =
+          GetOptionalAttr<bool>(config, "apply_prompt_template");
+      value.has_value()) {
+    session_config.SetApplyPromptTemplateInSession(*value);
+  }
+  if (auto value = GetOptionalAttr<int>(config, "num_output_candidates");
+      value.has_value()) {
+    session_config.SetNumOutputCandidates(*value);
+  }
+  if (auto value = GetOptionalAttr<int>(config, "max_output_tokens");
+      value.has_value()) {
+    session_config.SetMaxOutputTokens(*value);
+  }
+  if (auto value =
+          GetOptionalAttr<std::vector<std::vector<int>>>(config,
+                                                        "stop_token_ids");
+      value.has_value()) {
+    session_config.GetMutableStopTokenIds() = *value;
+  }
+
+  auto temperature = GetOptionalAttr<float>(config, "temperature");
+  auto top_p = GetOptionalAttr<float>(config, "top_p");
+  auto top_k = GetOptionalAttr<int>(config, "top_k");
+  auto do_sample = GetOptionalAttr<bool>(config, "do_sample");
+  if (do_sample.has_value() || temperature.has_value() || top_p.has_value() ||
+      top_k.has_value()) {
+    auto& sampler_params = session_config.GetMutableSamplerParams();
+    if (do_sample.has_value() && !*do_sample) {
+      sampler_params.set_type(proto::SamplerParameters::GREEDY);
+    } else if (top_p.has_value()) {
+      sampler_params.set_type(proto::SamplerParameters::TOP_P);
+      sampler_params.set_p(*top_p);
+    } else if (top_k.has_value()) {
+      sampler_params.set_type(proto::SamplerParameters::TOP_K);
+      sampler_params.set_k(*top_k);
+    } else if (do_sample.value_or(false)) {
+      sampler_params.set_type(proto::SamplerParameters::TOP_P);
+    }
+    if (top_k.has_value()) {
+      sampler_params.set_k(*top_k);
+    }
+    if (temperature.has_value()) {
+      sampler_params.set_temperature(*temperature);
+    }
+  }
+  return session_config;
+}
+
+DecodeConfig CreateDecodeConfigFromPython(const nb::handle& config) {
+  auto decode_config = DecodeConfig::CreateDefault();
+  if (config.is_none()) {
+    return decode_config;
+  }
+  if (auto value = GetOptionalAttr<int>(config, "max_output_tokens");
+      value.has_value()) {
+    decode_config.SetMaxOutputTokens(*value);
+  }
+  return decode_config;
 }
 
 // Note: Consider move to C++ API.
@@ -498,7 +595,8 @@ NB_MODULE(litert_lm_ext, module) {
          std::optional<int> max_num_tokens, std::string_view cache_dir,
          const nb::handle& vision_backend, const nb::handle& audio_backend,
          std::string_view input_prompt_as_hint,
-         std::optional<bool> enable_speculative_decoding) {
+         std::optional<bool> enable_speculative_decoding, int num_cpu_threads,
+         int prefill_chunk_size) {
         Backend main_backend = ParseBackend(backend);
         std::optional<Backend> vision_backend_opt = std::nullopt;
         if (!vision_backend.is_none()) {
@@ -520,6 +618,18 @@ NB_MODULE(litert_lm_ext, module) {
         if (!cache_dir.empty()) {
           settings.GetMutableMainExecutorSettings().SetCacheDir(
               std::string(cache_dir));
+        }
+        if (main_backend == Backend::CPU) {
+          auto& executor_settings = settings.GetMutableMainExecutorSettings();
+          auto cpu_settings = VALUE_OR_THROW(
+              executor_settings.MutableBackendConfig<litert::lm::CpuConfig>());
+          if (num_cpu_threads > 0) {
+            cpu_settings.number_of_threads = num_cpu_threads;
+          }
+          if (prefill_chunk_size >= 0) {
+            cpu_settings.prefill_chunk_size = prefill_chunk_size;
+          }
+          executor_settings.SetBackendConfig(cpu_settings);
         }
 
         if (enable_speculative_decoding.has_value()) {
@@ -544,6 +654,8 @@ NB_MODULE(litert_lm_ext, module) {
         SetBackendAttr(py_engine, backend);
         py_engine.attr("max_num_tokens") = max_num_tokens;
         py_engine.attr("cache_dir") = cache_dir;
+        py_engine.attr("num_cpu_threads") = num_cpu_threads;
+        py_engine.attr("prefill_chunk_size") = prefill_chunk_size;
         py_engine.attr("vision_backend") = vision_backend;
         py_engine.attr("audio_backend") = audio_backend;
         py_engine.attr("enable_speculative_decoding") =
@@ -555,7 +667,9 @@ NB_MODULE(litert_lm_ext, module) {
       nb::arg("vision_backend") = nb::none(),
       nb::arg("audio_backend") = nb::none(),
       nb::arg("input_prompt_as_hint") = "",
-      nb::arg("enable_speculative_decoding") = nb::none());
+      nb::arg("enable_speculative_decoding") = nb::none(),
+      nb::arg("num_cpu_threads") = 0,
+      nb::arg("prefill_chunk_size") = -1);
 
   module.def(
       "set_min_log_severity",
@@ -712,14 +826,56 @@ NB_MODULE(litert_lm_ext, module) {
           nb::arg("filter_channel_content_from_kv_cache") = false)
       .def(
           "create_session",
-          [](Engine& self, bool apply_prompt_template) {
-            auto session_config = SessionConfig::CreateDefault();
-            session_config.SetApplyPromptTemplateInSession(
-                apply_prompt_template);
+          [](Engine& self, const nb::handle& config) {
+            auto session_config =
+                CreateSessionConfigFromPython(config, /*apply_prompt_template=*/true);
+            return VALUE_OR_THROW(self.CreateSession(session_config));
+          },
+          nb::arg("config"),
+          "Creates a new session for this engine.")
+      .def(
+          "create_session",
+          [](Engine& self, bool apply_prompt_template,
+             const nb::handle& config) {
+            auto session_config =
+                CreateSessionConfigFromPython(config, apply_prompt_template);
             return VALUE_OR_THROW(self.CreateSession(session_config));
           },
           nb::kw_only(), nb::arg("apply_prompt_template") = true,
+          nb::arg("config") = nb::none(),
           "Creates a new session for this engine.")
+      .def(
+          "render_prompt",
+          [](const Engine& self, const nb::handle& messages,
+             const nb::handle& tools, const nb::handle& extra_context,
+             bool add_generation_prompt, bool continue_final_message) {
+            auto config = CreatePromptApiConfigFromEngine(self);
+            PromptRenderOptions options;
+            options.messages = nb::cast<nlohmann::json>(messages);
+            if (!tools.is_none()) {
+              options.tools = nb::cast<nlohmann::json>(tools);
+            }
+            if (!extra_context.is_none()) {
+              options.extra_context = nb::cast<nlohmann::json>(extra_context);
+            }
+            options.add_generation_prompt = add_generation_prompt;
+            options.continue_final_message = continue_final_message;
+            return VALUE_OR_THROW(RenderPrompt(config, options));
+          },
+          nb::arg("messages"), nb::kw_only(), nb::arg("tools") = nb::none(),
+          nb::arg("extra_context") = nb::none(),
+          nb::arg("add_generation_prompt") = true,
+          nb::arg("continue_final_message") = false,
+          "Renders a model-native prompt from structured messages.")
+      .def(
+          "parse_response",
+          [](const Engine& self, std::string_view text) {
+            auto config = CreatePromptApiConfigFromEngine(self);
+            return nlohmann::json(
+                VALUE_OR_THROW(ParseResponseText(config, text)));
+          },
+          nb::arg("text"),
+          "Parses raw generated text into a model-native assistant message.")
       .def("tokenize", &Tokenize, nb::arg("text"),
            "Tokenizes text using the engine's tokenizer.")
       .def("detokenize", &Detokenize, nb::arg("token_ids"),
@@ -760,26 +916,42 @@ NB_MODULE(litert_lm_ext, module) {
           "prompt/query into multiple chunks and call this function multiple "
           "times.")
       .def(
-          "run_decode",
-          [](Engine::Session& self) {
-            return ToPyResponses(VALUE_OR_THROW(self.RunDecode()));
+          "run_prefill_token_ids",
+          [](Engine::Session& self, const std::vector<int>& token_ids) {
+            auto token_ids_buffer =
+                VALUE_OR_THROW(Tokenizer::TokenIdsToTensorBuffer(token_ids));
+            std::vector<InputData> input_data;
+            input_data.emplace_back(InputText(std::move(token_ids_buffer)));
+            STATUS_OR_THROW(self.RunPrefill(input_data));
           },
+          nb::arg("token_ids"),
+          "Adds already-tokenized ids to the session prefill state.")
+      .def(
+          "run_decode",
+          [](Engine::Session& self, const nb::handle& config) {
+            auto decode_config = CreateDecodeConfigFromPython(config);
+            return ToPyResponses(VALUE_OR_THROW(self.RunDecode(decode_config)));
+          },
+          nb::arg("config") = nb::none(),
           "Starts the decoding process for the model to predict the response "
           "based on the input prompt/query added after using run_prefill "
           "function.")
       .def(
           "run_decode_async",
-          [](Engine::Session& self) {
+          [](Engine::Session& self, const nb::handle& config) {
             auto iterator = std::make_shared<ResponsesIterator>();
             absl::AnyInvocable<void(absl::StatusOr<Responses>)> callback =
                 [iterator](absl::StatusOr<Responses> responses) {
                   iterator->Push(std::move(responses));
                 };
-            auto task_controller_or = self.RunDecodeAsync(std::move(callback));
+            auto decode_config = CreateDecodeConfigFromPython(config);
+            auto task_controller_or =
+                self.RunDecodeAsync(std::move(callback), decode_config);
             STATUS_OR_THROW(task_controller_or.status());
             iterator->SetTaskController(std::move(*task_controller_or));
             return iterator;
           },
+          nb::arg("config") = nb::none(),
           "Starts the decoding process asynchronously.")
       .def(
           "run_text_scoring",
@@ -795,6 +967,17 @@ NB_MODULE(litert_lm_ext, module) {
           },
           nb::arg("target_text"), nb::arg("store_token_lengths") = false,
           "Scores the target text after the prefill process is done.")
+      .def(
+          "run_token_scoring",
+          [](Engine::Session& self,
+             const std::vector<std::vector<int>>& target_token_ids,
+             bool store_token_lengths) {
+            return ToPyResponses(VALUE_OR_THROW(
+                self.RunTokenIdScoring(target_token_ids, store_token_lengths)));
+          },
+          nb::arg("target_token_ids"),
+          nb::arg("store_token_lengths") = false,
+          "Scores the target token ids after the prefill process is done.")
       .def("cancel_process", &Engine::Session::CancelProcess,
            "Cancels the ongoing inference process.");
 

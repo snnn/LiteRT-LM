@@ -48,6 +48,8 @@
 
 namespace litert::lm {
 
+class BenchmarkInfo;
+
 // GPU executor that implements the shared functionalities for all GPU backends
 // (OpenCl/WebGpu/Metal/etc.). Note that this class itself is not instantiable,
 // since the Create() function is not implemented.
@@ -128,6 +130,10 @@ class LlmLiteRtCompiledModelExecutorBase : public LlmExecutor {
   // uses the internally stored `logits_data_type_`.
   absl::Status InitializeSampler(
       std::optional<ActivationDataType> logits_data_type = std::nullopt);
+
+  void SetBenchmarkInfo(BenchmarkInfo* benchmark_info) {
+    benchmark_info_ = benchmark_info;
+  }
 
   using LogitsDataType = ActivationDataType;
 
@@ -302,9 +308,16 @@ class LlmLiteRtCompiledModelExecutorBase : public LlmExecutor {
   // 2. The internal states.
   // 3. The processed tokens.(e.g. KVCache)
   std::unique_ptr<LlmContext> llm_context_;
+  BenchmarkInfo* benchmark_info_ = nullptr;
 
   // Whether the executor needs to prepare the kvcache buffers before execution.
   bool force_prepare_needed_ = false;
+
+  // Whether the first decode-step tensors have been dumped already.
+  bool dumped_first_decode_tensors_ = false;
+
+  // Whether the first decode-step LiteRT profile has been dumped already.
+  bool dumped_first_decode_profile_ = false;
 
   // Sampler for sampling logits.
   // For now, only CPU sampler is supported.

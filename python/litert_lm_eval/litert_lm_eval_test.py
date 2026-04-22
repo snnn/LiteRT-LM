@@ -60,8 +60,8 @@ class LitertLmEvalTest(parameterized.TestCase):
     litert_lm_eval.main()
 
     mock_lm_eval.simple_evaluate.assert_called_once_with(
-        model="litert_lm",
-        model_args="model_path=test_model.tflite,backend=GPU",
+        model="litert-lm",
+        model_args="pretrained=test_model.tflite,backend=GPU,prompt_mode=raw",
         tasks=["mmlu"],
         num_fewshot=None,
         limit=None,
@@ -76,6 +76,8 @@ class LitertLmEvalTest(parameterized.TestCase):
           "test_model.tflite",
           "--tasks",
           "mmlu",
+          "--prompt_mode",
+          "bundle",
           "--framework_args",
           "max_length=1024",
       ],
@@ -86,8 +88,11 @@ class LitertLmEvalTest(parameterized.TestCase):
     litert_lm_eval.main()
 
     mock_lm_eval.simple_evaluate.assert_called_once_with(
-        model="litert_lm",
-        model_args="model_path=test_model.tflite,backend=CPU,max_length=1024",
+        model="litert-lm",
+        model_args=(
+            "pretrained=test_model.tflite,backend=CPU,prompt_mode=bundle,"
+            "max_length=1024"
+        ),
         tasks=["mmlu"],
         num_fewshot=None,
         limit=None,

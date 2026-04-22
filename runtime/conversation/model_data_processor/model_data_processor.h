@@ -29,13 +29,14 @@
 #include "runtime/components/prompt_template.h"
 #include "runtime/conversation/io_types.h"
 #include "runtime/conversation/model_data_processor/config_registry.h"
+#include "runtime/conversation/model_data_processor/message_formatter.h"
 #include "runtime/engine/io_types.h"
 
 namespace litert::lm {
 
 // ModelDataProcessor is a model-specific component that converts between the
 // generic Json messages and the Litert LM InputData type.
-class ModelDataProcessor {
+class ModelDataProcessor : public MessageFormatter {
  public:
   // The result of rendering a single turn template.
   struct SingleTurnTemplateRenderResult {
@@ -48,6 +49,12 @@ class ModelDataProcessor {
 
   virtual ~ModelDataProcessor() = default;
 
+  absl::StatusOr<Message> TextToMessage(
+      absl::string_view text,
+      const DataProcessorArguments& args = DataProcessorArguments{}) const final {
+    return ToMessage(Responses(TaskState::kDone, {std::string(text)}), args);
+  }
+
   // Converts a rendered template prompt and a list of messages to a vector of
   // InputData, which is the input to the LLM Session.
   virtual absl::StatusOr<std::vector<InputData>> ToInputDataVector(
@@ -58,7 +65,8 @@ class ModelDataProcessor {
   // Converts a list of responses from the LLM Session to a Message, which is
   // the output to the user.
   virtual absl::StatusOr<Message> ToMessage(
-      const Responses& responses, const DataProcessorArguments& args) const = 0;
+      const Responses& responses,
+      const DataProcessorArguments& args) const = 0;
 
   // Converts a message into the Jinja template input for that message.
   //
@@ -70,7 +78,7 @@ class ModelDataProcessor {
   // model's Jinja template may expect the tool calls to already be formatted
   // in a particular tool calling syntax.
   virtual absl::StatusOr<nlohmann::ordered_json> MessageToTemplateInput(
-      const nlohmann::ordered_json& message) const = 0;
+      const nlohmann::ordered_json& message) const override = 0;
 
   // Renders a single turn template for the given message and history. Only the
   // prompt template supporting single turn is valid for this method.
@@ -99,7 +107,7 @@ class ModelDataProcessor {
   // Formats the provided tools to be inserted into the system/developer
   // instruction of the prompt.
   virtual absl::StatusOr<nlohmann::ordered_json> FormatTools(
-      const nlohmann::ordered_json& tools) const = 0;
+      const nlohmann::ordered_json& tools) const override = 0;
 
   // Creates a constraint from the given tools. The constraint is used for
   // constrained decoding. It is created from the tools defined in the preface,

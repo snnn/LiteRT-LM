@@ -16,8 +16,12 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <random>
@@ -33,7 +37,9 @@
 #include "absl/status/statusor.h"  // from @com_google_absl
 #include "absl/strings/match.h"  // from @com_google_absl
 #include "absl/strings/str_cat.h"  // from @com_google_absl
+#include "absl/strings/str_join.h"  // from @com_google_absl
 #include "absl/strings/string_view.h"  // from @com_google_absl
+#include "absl/time/time.h"  // from @com_google_absl
 #include "absl/types/span.h"  // from @com_google_absl
 #include "litert/cc/litert_common.h"  // from @litert
 #include "litert/cc/litert_compiled_model.h"  // from @litert
@@ -45,6 +51,7 @@
 #include "litert/cc/litert_model.h"  // from @litert
 #include "litert/cc/litert_model_types.h"  // from @litert
 #include "litert/cc/litert_options.h"  // from @litert
+#include "litert/cc/litert_profiler.h"  // from @litert
 #include "litert/cc/litert_ranked_tensor_type.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer.h"  // from @litert
 #include "litert/cc/litert_tensor_buffer_types.h"  // from @litert
@@ -53,6 +60,7 @@
 #include "runtime/components/embedding_lookup/embedding_lookup_manager.h"
 #include "runtime/components/model_resources.h"
 #include "runtime/components/sampler_factory.h"
+#include "runtime/engine/io_types.h"
 #include "runtime/executor/common_utils.h"
 #include "runtime/executor/executor_settings_base.h"
 #include "runtime/executor/litert_compiled_model_executor_utils.h"
@@ -70,11 +78,293 @@
 #include "tflite/delegates/xnnpack/xnnpack_delegate.h"  // from @litert
 #include "tflite/types/half.h"  // from @litert
 
+#if defined(__linux__) && defined(__has_include)
+#if __has_include(<sys/sdt.h>)
+#include <sys/sdt.h>
+#define LITERT_LM_USDT_PHASE_BEGIN(step, layer, phase) \
+  STAP_PROBE3(litert_lm_exec, phase_begin, step, layer, phase)
+#define LITERT_LM_USDT_PHASE_END(step, layer, phase) \
+  STAP_PROBE3(litert_lm_exec, phase_end, step, layer, phase)
+#else
+#define LITERT_LM_USDT_PHASE_BEGIN(step, layer, phase)
+#define LITERT_LM_USDT_PHASE_END(step, layer, phase)
+#endif
+#else
+#define LITERT_LM_USDT_PHASE_BEGIN(step, layer, phase)
+#define LITERT_LM_USDT_PHASE_END(step, layer, phase)
+#endif
 
 namespace litert::lm {
 namespace {
 
+bool ShouldProfileScoring() {
+  static const bool enabled = []() {
+    const char* value = std::getenv("LITERT_LM_PROFILE_SCORING");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+  }();
+  return enabled;
+}
+
+bool ShouldProfileKvCopyLocks() {
+  static const bool enabled = []() {
+    const char* value = std::getenv("LITERT_LM_PROFILE_KV_COPY_LOCKS");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+  }();
+  return enabled;
+}
+
+bool ShouldDebugInputPosLock() {
+  static const bool enabled = []() {
+    const char* value = std::getenv("LITERT_LM_DEBUG_INPUT_POS_LOCK");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+  }();
+  return enabled;
+}
+
+std::string GetFirstDecodeDumpDirFromEnv() {
+  const char* value = std::getenv("LITERT_LM_DUMP_FIRST_DECODE_TENSORS_DIR");
+  return value == nullptr ? std::string() : std::string(value);
+}
+
+std::string GetFirstDecodeProfilePathFromEnv() {
+  const char* value = std::getenv("LITERT_LM_DUMP_FIRST_DECODE_PROFILE_PATH");
+  return value == nullptr ? std::string() : std::string(value);
+}
+
 using ::absl::Span;
+
+inline void BenchmarkMark(BenchmarkInfo* benchmark_info,
+                          absl::string_view mark_name) {
+  if (benchmark_info != nullptr) {
+    benchmark_info->TimeMarkDelta(std::string(mark_name)).IgnoreError();
+  }
+}
+
+enum ExecutorTracePhase : int32_t {
+  kTraceUnknown = 0,
+  kTraceDecodePrepareInputs = 1,
+  kTraceDecodeEmbeddingLookup = 2,
+  kTraceDecodeBindBuffers = 3,
+  kTraceDecodeModelRun = 4,
+  kTraceDecodeSampling = 5,
+  kTracePrefillPrepareInputs = 6,
+  kTracePrefillEmbeddingLookup = 7,
+  kTracePrefillBindBuffers = 8,
+  kTracePrefillModelRun = 9,
+  kTracePrepareFirstDecode = 10,
+  kTracePrepareFirstDecodeBroadcast = 11,
+  kTracePrepareFirstDecodeCopyKv = 12,
+};
+
+inline void TracePhaseBegin(int step, ExecutorTracePhase phase, int layer = -1) {
+  LITERT_LM_USDT_PHASE_BEGIN(step, layer, static_cast<int32_t>(phase));
+}
+
+inline void TracePhaseEnd(int step, ExecutorTracePhase phase, int layer = -1) {
+  LITERT_LM_USDT_PHASE_END(step, layer, static_cast<int32_t>(phase));
+}
+
+std::string SanitizeTensorName(absl::string_view name) {
+  std::string out;
+  out.reserve(name.size());
+  for (char c : name) {
+    if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') {
+      out.push_back(c);
+    } else {
+      out.push_back('_');
+    }
+  }
+  return out;
+}
+
+std::string ElementTypeName(litert::ElementType element_type) {
+  switch (element_type) {
+    case litert::ElementType::Float32:
+      return "FLOAT32";
+    case litert::ElementType::Float16:
+      return "FLOAT16";
+    case litert::ElementType::Int32:
+      return "INT32";
+    case litert::ElementType::Int8:
+      return "INT8";
+    case litert::ElementType::Bool:
+      return "BOOL";
+    default:
+      return absl::StrCat(static_cast<int>(element_type));
+  }
+}
+
+std::string ShapeString(const litert::RankedTensorType& tensor_type) {
+  const auto dims = tensor_type.Layout().Dimensions();
+  if (dims.empty()) {
+    return "scalar";
+  }
+  std::string out;
+  for (size_t i = 0; i < dims.size(); ++i) {
+    if (i != 0) {
+      out.push_back('x');
+    }
+    absl::StrAppend(&out, dims[i]);
+  }
+  return out;
+}
+
+std::string StridesString(const litert::RankedTensorType& tensor_type);
+
+std::string BufferTypeName(const TensorBuffer& tensor) {
+  auto buffer_type = tensor.BufferType();
+  if (!buffer_type.HasValue()) {
+    return absl::StrCat("ERROR(", buffer_type.Error().Message(), ")");
+  }
+  return BufferTypeToStringCC(*buffer_type);
+}
+
+std::string TensorBufferSummary(const TensorBuffer& tensor) {
+  std::vector<std::string> parts;
+  parts.push_back(absl::StrCat("buffer_type=", BufferTypeName(tensor)));
+  if (auto tensor_type = tensor.TensorType(); tensor_type.HasValue()) {
+    parts.push_back(
+        absl::StrCat("elem_type=", ElementTypeName(tensor_type->ElementType())));
+    parts.push_back(absl::StrCat("shape=", ShapeString(*tensor_type)));
+    const std::string strides = StridesString(*tensor_type);
+    if (!strides.empty()) {
+      parts.push_back(absl::StrCat("strides=", strides));
+    }
+  } else {
+    parts.push_back(
+        absl::StrCat("tensor_type_error=", tensor_type.Error().Message()));
+  }
+  if (auto packed_size = tensor.PackedSize(); packed_size.HasValue()) {
+    parts.push_back(absl::StrCat("packed_size=", *packed_size));
+  } else {
+    parts.push_back(
+        absl::StrCat("packed_size_error=", packed_size.Error().Message()));
+  }
+  return absl::StrJoin(parts, " ");
+}
+
+bool ShouldTraceKvTensorName(absl::string_view name) {
+  return name.find("kv_cache_k_13") != absl::string_view::npos ||
+         name.find("kv_cache_v_13") != absl::string_view::npos ||
+         name.find("kv_cache_k_14") != absl::string_view::npos ||
+         name.find("kv_cache_v_14") != absl::string_view::npos;
+}
+
+void MaybeLogCompiledModelBufferCreation(
+    absl::string_view phase, absl::string_view signature_name,
+    absl::string_view tensor_name, bool is_input,
+    const TensorBuffer& tensor_buffer) {
+  if (!ShouldTraceKvTensorName(tensor_name)) {
+    return;
+  }
+  ABSL_LOG(INFO) << "Executor buffer create phase=" << phase
+                 << " signature=" << signature_name
+                 << " direction=" << (is_input ? "input" : "output")
+                 << " name=" << tensor_name
+                 << " created_type=" << BufferTypeName(tensor_buffer);
+}
+
+std::string StridesString(const litert::RankedTensorType& tensor_type) {
+  const auto layout = tensor_type.Layout();
+  if (!layout.HasStrides()) {
+    return "";
+  }
+  const auto strides = layout.Strides();
+  std::vector<std::string> parts;
+  parts.reserve(strides.size());
+  for (uint32_t stride : strides) {
+    parts.push_back(absl::StrCat(stride));
+  }
+  return absl::StrJoin(parts, "x");
+}
+
+absl::Status DumpTensorMap(
+    absl::flat_hash_map<absl::string_view, TensorBuffer>& tensors,
+    absl::string_view role, const std::filesystem::path& step_dir,
+    std::ofstream& manifest) {
+  for (auto& [name, tensor] : tensors) {
+    LITERT_ASSIGN_OR_RETURN(auto tensor_type, tensor.TensorType());
+    LITERT_ASSIGN_OR_RETURN(auto packed_size, tensor.PackedSize());
+    const std::string filename = absl::StrCat(
+        role, "__", SanitizeTensorName(name), ".csv");
+    const std::filesystem::path file_path = step_dir / filename;
+    LITERT_RETURN_IF_ERROR(DumpTensorToCsv(tensor, file_path.string()));
+    manifest << role << '\t' << name << '\t'
+             << ElementTypeName(tensor_type.ElementType()) << '\t'
+             << ShapeString(tensor_type) << '\t' << BufferTypeName(tensor)
+             << '\t' << packed_size << '\t' << StridesString(tensor_type)
+             << '\t' << filename << '\n';
+  }
+  return absl::OkStatus();
+}
+
+absl::Status DumpTensorSubset(
+    absl::flat_hash_map<absl::string_view, TensorBuffer>& tensors,
+    const absl::flat_hash_map<absl::string_view, TensorBuffer>& tensor_names,
+    absl::string_view role, const std::filesystem::path& step_dir,
+    std::ofstream& manifest) {
+  for (const auto& entry : tensor_names) {
+    const auto name = entry.first;
+    auto it = tensors.find(name);
+    if (it == tensors.end()) {
+      return absl::NotFoundError(
+          absl::StrCat("Missing tensor in merged decode map: ", name));
+    }
+    auto& tensor = it->second;
+    LITERT_ASSIGN_OR_RETURN(auto tensor_type, tensor.TensorType());
+    LITERT_ASSIGN_OR_RETURN(auto packed_size, tensor.PackedSize());
+    const std::string filename = absl::StrCat(
+        role, "__", SanitizeTensorName(name), ".csv");
+    const std::filesystem::path file_path = step_dir / filename;
+    LITERT_RETURN_IF_ERROR(DumpTensorToCsv(tensor, file_path.string()));
+    manifest << role << '\t' << name << '\t'
+             << ElementTypeName(tensor_type.ElementType()) << '\t'
+             << ShapeString(tensor_type) << '\t' << BufferTypeName(tensor)
+             << '\t' << packed_size << '\t' << StridesString(tensor_type)
+             << '\t' << filename << '\n';
+  }
+  return absl::OkStatus();
+}
+
+absl::Status DumpProfilerArtifacts(
+    const std::filesystem::path& summary_path, absl::string_view summary,
+    absl::Span<const ProfiledEventData> events) {
+  std::filesystem::create_directories(summary_path.parent_path());
+  {
+    std::ofstream summary_file(summary_path.string());
+    if (!summary_file.is_open()) {
+      return absl::InternalError(
+          absl::StrCat("Failed to open decode profile summary file: ",
+                       summary_path.string()));
+    }
+    summary_file << summary;
+  }
+
+  const std::filesystem::path events_path =
+      std::filesystem::path(absl::StrCat(summary_path.string(), ".events.tsv"));
+  std::ofstream events_file(events_path.string());
+  if (!events_file.is_open()) {
+    return absl::InternalError(
+        absl::StrCat("Failed to open decode profile events file: ",
+                     events_path.string()));
+  }
+  events_file
+      << "index\ttag\tevent_type\tstart_timestamp_us\telapsed_time_us\t"
+         "event_metadata1\tevent_metadata2\tevent_source\t"
+         "begin_total_allocated_bytes\tend_total_allocated_bytes\n";
+  for (size_t i = 0; i < events.size(); ++i) {
+    const auto& event = events[i];
+    events_file << i << '\t' << (event.tag ? event.tag : "") << '\t'
+                << static_cast<int>(event.event_type) << '\t'
+                << event.start_timestamp_us << '\t' << event.elapsed_time_us
+                << '\t' << event.event_metadata1 << '\t'
+                << event.event_metadata2 << '\t'
+                << static_cast<int>(event.event_source) << '\t'
+                << event.begin_mem_usage.total_allocated_bytes << '\t'
+                << event.end_mem_usage.total_allocated_bytes << '\n';
+  }
+  return absl::OkStatus();
+}
 
 // Names of the signature runners, used to get the signature runners from the
 // interpreter.
@@ -138,45 +428,113 @@ absl::Status CopyKvCacheBuffers(
         src_kv_cache_buffers,
     const absl::flat_hash_map<absl::string_view, TensorBuffer>&
         dst_kv_cache_buffers) {
+  const bool profile_kv_copy_locks = ShouldProfileKvCopyLocks();
+  const absl::Time total_start_time =
+      profile_kv_copy_locks ? absl::Now() : absl::Time();
+  absl::Duration total_src_lock_time = absl::ZeroDuration();
+  absl::Duration total_dst_lock_time = absl::ZeroDuration();
+  absl::Duration total_memcpy_time = absl::ZeroDuration();
+  absl::Duration total_unlock_time = absl::ZeroDuration();
+  size_t total_bytes_copied = 0;
+  size_t total_tensors_copied = 0;
+  absl::Duration slowest_tensor_total_time = absl::ZeroDuration();
+  std::string slowest_tensor_name;
   for (const auto& [name, src_buffer] : src_kv_cache_buffers) {
     if (!dst_kv_cache_buffers.contains(name)) {
       return absl::FailedPreconditionError(
           absl::StrCat("KV cache buffer ", name, " not found."));
     }
     const auto& dst_buffer = dst_kv_cache_buffers.at(name);
-    LITERT_ASSIGN_OR_RETURN(auto src_buffer_lock_and_addr,
-                            TensorBufferScopedLock::Create(
-                                src_buffer, TensorBuffer::LockMode::kRead));
-    LITERT_ASSIGN_OR_RETURN(size_t src_buffer_size, src_buffer.PackedSize());
-    const char* src_buffer_ptr =
-        static_cast<const char*>(src_buffer_lock_and_addr.second);
+    const absl::Time tensor_start_time =
+        profile_kv_copy_locks ? absl::Now() : absl::Time();
+    absl::Time unlock_start_time;
+    size_t copied_bytes_for_tensor = 0;
+    {
+      const absl::Time src_lock_start_time =
+          profile_kv_copy_locks ? absl::Now() : absl::Time();
+      LITERT_ASSIGN_OR_RETURN(auto src_buffer_lock_and_addr,
+                              TensorBufferScopedLock::Create(
+                                  src_buffer, TensorBuffer::LockMode::kRead));
+      if (profile_kv_copy_locks) {
+        total_src_lock_time += absl::Now() - src_lock_start_time;
+      }
+      LITERT_ASSIGN_OR_RETURN(size_t src_buffer_size, src_buffer.PackedSize());
+      const char* src_buffer_ptr =
+          static_cast<const char*>(src_buffer_lock_and_addr.second);
 
-    LITERT_ASSIGN_OR_RETURN(auto dst_buffer_lock_and_addr,
-                            TensorBufferScopedLock::Create(
-                                dst_buffer, TensorBuffer::LockMode::kWrite));
-    LITERT_ASSIGN_OR_RETURN(size_t dst_buffer_size, dst_buffer.PackedSize());
-    char* dst_buffer_ptr =
-        static_cast<char*>(const_cast<void*>(dst_buffer_lock_and_addr.second));
-    // This copy is based on the assumption that the KV cache buffers are in the
-    // layout of [batch * X, ...] or [1, batch * X, ...] where X could be 1 or
-    // more and X doesn't make values interleaved across batches which is true
-    // for the current LLM models of all backends.
-    if (src_index_to_copy_on_prefill >= 0) {
-      // This is the case of the first prefill after decode. It reduces the KV
-      // cache size to one by copying only the cache content of the given index.
-      RET_CHECK_EQ(src_buffer_size, dst_buffer_size * decode_batch_size);
-      RET_CHECK_LT(src_index_to_copy_on_prefill, decode_batch_size);
-      src_buffer_ptr += src_index_to_copy_on_prefill * dst_buffer_size;
-      memcpy(dst_buffer_ptr, src_buffer_ptr, dst_buffer_size);
-    } else {
-      // This is the case of the first decode after prefill. It broadcasts the
-      // KV cache contents to all the batches.
-      RET_CHECK_EQ(src_buffer_size * decode_batch_size, dst_buffer_size);
-      for (int i = 0; i < decode_batch_size; ++i) {
-        memcpy(dst_buffer_ptr, src_buffer_ptr, src_buffer_size);
-        dst_buffer_ptr += src_buffer_size;
+      const absl::Time dst_lock_start_time =
+          profile_kv_copy_locks ? absl::Now() : absl::Time();
+      LITERT_ASSIGN_OR_RETURN(auto dst_buffer_lock_and_addr,
+                              TensorBufferScopedLock::Create(
+                                  dst_buffer, TensorBuffer::LockMode::kWrite));
+      if (profile_kv_copy_locks) {
+        total_dst_lock_time += absl::Now() - dst_lock_start_time;
+      }
+      LITERT_ASSIGN_OR_RETURN(size_t dst_buffer_size, dst_buffer.PackedSize());
+      char* dst_buffer_ptr = static_cast<char*>(
+          const_cast<void*>(dst_buffer_lock_and_addr.second));
+      // This copy is based on the assumption that the KV cache buffers are in
+      // the layout of [batch * X, ...] or [1, batch * X, ...] where X could be
+      // 1 or more and X doesn't make values interleaved across batches which is
+      // true for the current LLM models of all backends.
+      const absl::Time memcpy_start_time =
+          profile_kv_copy_locks ? absl::Now() : absl::Time();
+      if (src_index_to_copy_on_prefill >= 0) {
+        // This is the case of the first prefill after decode. It reduces the KV
+        // cache size to one by copying only the cache content of the given
+        // index.
+        RET_CHECK_EQ(src_buffer_size, dst_buffer_size * decode_batch_size);
+        RET_CHECK_LT(src_index_to_copy_on_prefill, decode_batch_size);
+        src_buffer_ptr += src_index_to_copy_on_prefill * dst_buffer_size;
+        memcpy(dst_buffer_ptr, src_buffer_ptr, dst_buffer_size);
+        copied_bytes_for_tensor = dst_buffer_size;
+      } else {
+        // This is the case of the first decode after prefill. It broadcasts the
+        // KV cache contents to all the batches.
+        RET_CHECK_EQ(src_buffer_size * decode_batch_size, dst_buffer_size);
+        for (int i = 0; i < decode_batch_size; ++i) {
+          memcpy(dst_buffer_ptr, src_buffer_ptr, src_buffer_size);
+          dst_buffer_ptr += src_buffer_size;
+        }
+        copied_bytes_for_tensor = src_buffer_size * decode_batch_size;
+      }
+      if (profile_kv_copy_locks) {
+        total_memcpy_time += absl::Now() - memcpy_start_time;
+        unlock_start_time = absl::Now();
       }
     }
+    if (profile_kv_copy_locks) {
+      total_unlock_time += absl::Now() - unlock_start_time;
+      total_bytes_copied += copied_bytes_for_tensor;
+      ++total_tensors_copied;
+      const absl::Duration tensor_total_time = absl::Now() - tensor_start_time;
+      if (tensor_total_time > slowest_tensor_total_time) {
+        slowest_tensor_total_time = tensor_total_time;
+        slowest_tensor_name = std::string(name);
+      }
+    }
+  }
+  if (profile_kv_copy_locks) {
+    const absl::Duration total_elapsed = absl::Now() - total_start_time;
+    const double mib_copied =
+        static_cast<double>(total_bytes_copied) / (1024.0 * 1024.0);
+    const double seconds = absl::ToDoubleSeconds(total_elapsed);
+    const double throughput_mib_per_s =
+        seconds > 0.0 ? mib_copied / seconds : 0.0;
+    ABSL_LOG(INFO)
+        << "CopyKvCacheBuffers profile"
+        << " tensors=" << total_tensors_copied
+        << " bytes=" << total_bytes_copied
+        << " mib=" << mib_copied
+        << " total_ms=" << absl::ToDoubleMilliseconds(total_elapsed)
+        << " src_lock_ms=" << absl::ToDoubleMilliseconds(total_src_lock_time)
+        << " dst_lock_ms=" << absl::ToDoubleMilliseconds(total_dst_lock_time)
+        << " memcpy_ms=" << absl::ToDoubleMilliseconds(total_memcpy_time)
+        << " unlock_ms=" << absl::ToDoubleMilliseconds(total_unlock_time)
+        << " throughput_mib_per_s=" << throughput_mib_per_s
+        << " slowest_tensor=" << slowest_tensor_name
+        << " slowest_tensor_total_ms="
+        << absl::ToDoubleMilliseconds(slowest_tensor_total_time);
   }
   return absl::OkStatus();
 }
@@ -396,6 +754,7 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::CreatePrefillInputBuffers(
     int context_length,
     absl::flat_hash_map<absl::string_view, TensorBuffer>&
         prefill_input_buffers) {
+  BenchmarkMark(benchmark_info_, "llm_prefill_create_buffers");
   auto dyn_shape_resolver = [&](absl::string_view tensor_name) -> absl::Status {
     return ResolveDynamicShape(model_, compiled_model_, prefill_signature,
                                tensor_name, sequence_length);
@@ -442,6 +801,12 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::CreatePrefillInputBuffers(
   RETURN_IF_ERROR(dyn_shape_resolver(signatures_.input_positions));
   auto positions_buffer = compiled_model_.CreateInputBuffer(
       prefill_signature, signatures_.input_positions);
+  if (ShouldDebugInputPosLock() && positions_buffer.HasValue()) {
+    ABSL_LOG(INFO) << "Prefill input_pos buffer created signature="
+                   << prefill_signature
+                   << " name=" << signatures_.input_positions << " "
+                   << TensorBufferSummary(*positions_buffer);
+  }
   prefill_input_buffers[signatures_.input_positions] =
       std::move(*positions_buffer);
 
@@ -467,6 +832,7 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::CreatePrefillInputBuffers(
     prefill_input_buffers[signatures_.input_int32_param.value()] =
         std::move(*param_tensor_buffer);
   }
+  BenchmarkMark(benchmark_info_, "llm_prefill_create_buffers");
   return absl::OkStatus();
 }
 
@@ -579,20 +945,36 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::PrefillInternal(
     absl::string_view prefill_signature,
     absl::flat_hash_map<absl::string_view, TensorBuffer>& prefill_input_buffers,
     Span<const int> ids, bool async) {
+  const int trace_step = llm_context_->runtime_state().current_step;
+  TracePhaseBegin(trace_step, kTracePrefillPrepareInputs);
+  BenchmarkMark(benchmark_info_, "llm_prefill_prepare_inputs");
   RETURN_IF_ERROR(RollBackProcessedTokens());
 
   {
     // Fill the input buffers with scoped locks.
     auto& prefill_input_pos =
         prefill_input_buffers[signatures_.input_positions];
+    if (ShouldDebugInputPosLock()) {
+      ABSL_LOG(INFO) << "Prefill input_pos before lock signature="
+                     << prefill_signature
+                     << " name=" << signatures_.input_positions << " "
+                     << TensorBufferSummary(prefill_input_pos);
+    }
     LITERT_ASSIGN_OR_RETURN(auto prefill_input_pos_size,
                             prefill_input_pos.PackedSize());
-    LITERT_ASSIGN_OR_RETURN(
-        auto prefill_input_pos_lock_and_addr,
-        TensorBufferScopedLock::Create(prefill_input_pos,
-                                       TensorBuffer::LockMode::kWrite));
+    auto prefill_input_pos_lock_and_addr = TensorBufferScopedLock::Create(
+        prefill_input_pos, TensorBuffer::LockMode::kWrite);
+    if (!prefill_input_pos_lock_and_addr.HasValue()) {
+      return absl::InvalidArgumentError(
+          absl::StrCat("Failed to lock prefill input_pos for write. "
+                       "signature=",
+                       prefill_signature, " name=",
+                       signatures_.input_positions, " summary=",
+                       TensorBufferSummary(prefill_input_pos), " lock_error=",
+                       prefill_input_pos_lock_and_addr.Error().Message()));
+    }
     auto* prefill_input_pos_ptr =
-        static_cast<int32_t*>(prefill_input_pos_lock_and_addr.second);
+        static_cast<int32_t*>(prefill_input_pos_lock_and_addr->second);
 
     memset(prefill_input_pos_ptr, 0, prefill_input_pos_size);
     if (signatures_.input_attn_mask.has_value()) {
@@ -685,6 +1067,8 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::PrefillInternal(
         // and filling is handled by the embedding lookup.
         TensorBuffer* prefill_input_embeddings_buffer =
             &(prefill_input_buffers[signatures_.input_embeddings.value()]);
+        TracePhaseBegin(trace_step, kTracePrefillEmbeddingLookup);
+        BenchmarkMark(benchmark_info_, "llm_prefill_embedding_lookup");
         RETURN_IF_ERROR(embedding_lookup_->LookupPrefill(
             processed_input_tokens, prefill_input_embeddings_buffer,
             /*offset=*/input_idx));
@@ -698,6 +1082,8 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::PrefillInternal(
               processed_input_tokens, prefill_input_per_layer_embeddings_buffer,
               /*offset=*/input_idx));
         }
+        BenchmarkMark(benchmark_info_, "llm_prefill_embedding_lookup");
+        TracePhaseEnd(trace_step, kTracePrefillEmbeddingLookup);
       }
       if (signatures_.input_attn_mask.has_value()) {
         RETURN_IF_ERROR(FillAttentionMask(
@@ -720,6 +1106,8 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::PrefillInternal(
       // Look up the embeddings for the last token so they can be used in the
       // next prefill or decode. This has to be done now in the case of
       // multi-modal prefill so the embeddings are used in the correct order.
+      BenchmarkMark(benchmark_info_, "llm_prefill_embedding_lookup");
+      TracePhaseBegin(trace_step, kTracePrefillEmbeddingLookup);
       RETURN_IF_ERROR(embedding_lookup_->LookupPrefill(
           last_input_token->id(), last_input_token->mutable_embedding()));
       if (use_per_layer_embedding) {
@@ -727,6 +1115,8 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::PrefillInternal(
             last_input_token->id(),
             last_input_token->mutable_per_layer_embedding()));
       }
+      BenchmarkMark(benchmark_info_, "llm_prefill_embedding_lookup");
+      TracePhaseEnd(trace_step, kTracePrefillEmbeddingLookup);
     }
     // Add the last input token to the pending input token list.
     RETURN_IF_ERROR(llm_context_->processed_context()
@@ -734,9 +1124,13 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::PrefillInternal(
                         .AddPendingInputToken({std::move(last_input_token)}));
     ++llm_context_->runtime_state().current_step;
     if (skip_prefill) {
+      BenchmarkMark(benchmark_info_, "llm_prefill_prepare_inputs");
+      TracePhaseEnd(trace_step, kTracePrefillPrepareInputs);
       return absl::OkStatus();
     }
   }
+  BenchmarkMark(benchmark_info_, "llm_prefill_prepare_inputs");
+  TracePhaseEnd(trace_step, kTracePrefillPrepareInputs);
   return BindTensorsAndRunPrefill(prefill_signature, prefill_input_buffers,
                                   async);
 }
@@ -745,6 +1139,9 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::BindTensorsAndRunPrefill(
     absl::string_view prefill_signature,
     absl::flat_hash_map<absl::string_view, TensorBuffer>& prefill_input_buffers,
     bool async) {
+  const int trace_step = llm_context_->runtime_state().current_step - 1;
+  TracePhaseBegin(trace_step, kTracePrefillBindBuffers);
+  BenchmarkMark(benchmark_info_, "llm_prefill_bind_buffers");
   absl::flat_hash_map<absl::string_view, TensorBuffer> input_buffers;
   for (const auto& [input_name, input_buffer] : prefill_input_buffers) {
     LITERT_ASSIGN_OR_RETURN(auto input_buffer_dup, input_buffer.Duplicate());
@@ -760,7 +1157,11 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::BindTensorsAndRunPrefill(
     output_buffer_dup.ClearEvent();
     output_buffers[output_name] = std::move(output_buffer_dup);
   }
+  BenchmarkMark(benchmark_info_, "llm_prefill_bind_buffers");
+  TracePhaseEnd(trace_step, kTracePrefillBindBuffers);
 
+  TracePhaseBegin(trace_step, kTracePrefillModelRun);
+  BenchmarkMark(benchmark_info_, "llm_prefill_model_run");
   if (async) {
     LITERT_RETURN_IF_ERROR(compiled_model_.RunAsync(
         prefill_signature, input_buffers, output_buffers, async));
@@ -768,6 +1169,8 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::BindTensorsAndRunPrefill(
     LITERT_RETURN_IF_ERROR(
         compiled_model_.Run(prefill_signature, input_buffers, output_buffers));
   }
+  BenchmarkMark(benchmark_info_, "llm_prefill_model_run");
+  TracePhaseEnd(trace_step, kTracePrefillModelRun);
 
   if (!gpu_optimized_single_buffer_cache_) {
     std::swap(input_kv_cache_buffers_, output_kv_cache_buffers_);
@@ -778,6 +1181,9 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::BindTensorsAndRunPrefill(
 absl::StatusOr<ProcessedTokens::StepAndToken>
 LlmLiteRtCompiledModelExecutorBase::GetTokenToDecode(
     const ExecutorInputs& inputs) {
+  const int step = llm_context_->runtime_state().current_step - 1;
+  TracePhaseBegin(step, kTraceDecodePrepareInputs);
+  BenchmarkMark(benchmark_info_, "llm_decode_prepare_inputs");
   RETURN_IF_ERROR(RollBackProcessedTokens());
 
   if (inputs.GetTextDataPtr().ok()) {
@@ -823,14 +1229,20 @@ LlmLiteRtCompiledModelExecutorBase::GetTokenToDecode(
     // sampling.
     if (signatures_.input_embeddings.has_value() &&
         token->mutable_embedding().empty()) {
+      TracePhaseBegin(step, kTraceDecodeEmbeddingLookup);
+      BenchmarkMark(benchmark_info_, "llm_decode_embedding_lookup");
       RETURN_IF_ERROR(embedding_lookup_->LookupDecode(
           token->id(), token->mutable_embedding()));
       if (signatures_.input_per_layer_embeddings.has_value()) {
         RETURN_IF_ERROR(per_layer_embedding_lookup_->LookupDecode(
             token->id(), token->mutable_per_layer_embedding()));
       }
+      BenchmarkMark(benchmark_info_, "llm_decode_embedding_lookup");
+      TracePhaseEnd(step, kTraceDecodeEmbeddingLookup);
     }
   }
+  BenchmarkMark(benchmark_info_, "llm_decode_prepare_inputs");
+  TracePhaseEnd(step, kTraceDecodePrepareInputs);
   return llm_context_->processed_context()
       .processed_tokens()
       .GetNextUnprocessedToken();
@@ -882,6 +1294,7 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::DecodeInternal(
       signatures_.input_per_layer_embeddings.has_value();
 
   // Fill the input buffers with scoped locks.
+  BenchmarkMark(benchmark_info_, "llm_decode_prepare_inputs");
   if (use_token_as_lookup) {
     RETURN_IF_ERROR(FillInputBufferWithToken(
         token, decode_input_buffers_[signatures_.input_tokens]));
@@ -941,12 +1354,16 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::DecodeInternal(
     RETURN_IF_ERROR(FillSingleBufferCacheParamTensor(
         decode_input_buffers_[signatures_.input_int32_param.value()], step, 1));
   }
+  BenchmarkMark(benchmark_info_, "llm_decode_prepare_inputs");
 
   return BindTensorsAndRunDecode(&output_logits);
 }
 
 absl::Status LlmLiteRtCompiledModelExecutorBase::BindTensorsAndRunDecode(
     TensorBuffer* output_logits) {
+  const int step = llm_context_->runtime_state().current_step - 1;
+  TracePhaseBegin(step, kTraceDecodeBindBuffers);
+  BenchmarkMark(benchmark_info_, "llm_decode_bind_buffers");
   absl::flat_hash_map<absl::string_view, TensorBuffer> decode_input_buffers;
   for (const auto& [input_name, input_buffer] : decode_input_buffers_) {
     LITERT_ASSIGN_OR_RETURN(auto input_buffer_dup, input_buffer.Duplicate());
@@ -972,11 +1389,122 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::BindTensorsAndRunDecode(
     output_buffer_dup.ClearEvent();
     decode_output_buffers[output_name] = std::move(output_buffer_dup);
   }
+  BenchmarkMark(benchmark_info_, "llm_decode_bind_buffers");
+  TracePhaseEnd(step, kTraceDecodeBindBuffers);
+
+  std::optional<std::filesystem::path> dump_step_dir;
+  const auto& advanced_settings = executor_settings_.GetAdvancedSettings();
+  const std::string dump_first_decode_tensors_dir =
+      advanced_settings.has_value() &&
+              !advanced_settings->dump_first_decode_tensors_dir.empty()
+          ? advanced_settings->dump_first_decode_tensors_dir
+          : GetFirstDecodeDumpDirFromEnv();
+  if (!dumped_first_decode_tensors_ &&
+      !dump_first_decode_tensors_dir.empty()) {
+    const int step = llm_context_->runtime_state().current_step - 1;
+    dump_step_dir =
+        std::filesystem::path(dump_first_decode_tensors_dir) /
+        absl::StrCat("step_", step);
+    std::filesystem::create_directories(*dump_step_dir);
+    std::ofstream manifest((*dump_step_dir / "manifest.tsv").string());
+    if (!manifest.is_open()) {
+      return absl::InternalError(absl::StrCat(
+          "Failed to open first-decode manifest file under ",
+          dump_step_dir->string()));
+    }
+    manifest << "role\tname\tdtype\tshape\tbuffer_type\tpacked_size\tstrides\tcsv_path\n";
+    LITERT_RETURN_IF_ERROR(DumpTensorMap(
+        decode_input_buffers_, "decode_input", *dump_step_dir, manifest));
+    LITERT_RETURN_IF_ERROR(DumpTensorMap(
+        *input_kv_cache_buffers_, "kv_input", *dump_step_dir, manifest));
+  }
+
+  std::optional<litert::Profiler> decode_profiler;
+  const std::string dump_first_decode_profile_path =
+      advanced_settings.has_value() &&
+              !advanced_settings->dump_first_decode_profile_path.empty()
+          ? advanced_settings->dump_first_decode_profile_path
+          : GetFirstDecodeProfilePathFromEnv();
+  if (!dumped_first_decode_profile_ &&
+      !dump_first_decode_profile_path.empty()) {
+    LiteRtProfiler profiler_handle = nullptr;
+    const auto profiler_status = compiled_model_.env_.runtime
+                                     ->CompiledModelGetProfiler(
+                                         compiled_model_.Get(),
+                                         &profiler_handle);
+    if (profiler_status != kLiteRtStatusOk) {
+      ABSL_LOG(WARNING) << "Failed to get decode profiler: "
+                        << static_cast<int>(profiler_status);
+    } else {
+      decode_profiler.emplace(profiler_handle, OwnHandle::kNo);
+      if (auto status = decode_profiler->Reset(); !status.HasValue()) {
+        ABSL_LOG(WARNING) << "Failed to reset decode profiler: "
+                          << status.Error().Message();
+        decode_profiler.reset();
+      } else if (auto status = decode_profiler->StartProfiling();
+                 !status.HasValue()) {
+        ABSL_LOG(WARNING) << "Failed to start decode profiler: "
+                          << status.Error().Message();
+        decode_profiler.reset();
+      }
+    }
+  }
 
   bool async = true;
+  TracePhaseBegin(step, kTraceDecodeModelRun);
+  BenchmarkMark(benchmark_info_, "llm_decode_model_run");
   LITERT_RETURN_IF_ERROR(
       compiled_model_.RunAsync(kDecodeSignatureRunner, decode_input_buffers,
                                decode_output_buffers, async));
+  BenchmarkMark(benchmark_info_, "llm_decode_model_run");
+  TracePhaseEnd(step, kTraceDecodeModelRun);
+
+  if (decode_profiler.has_value()) {
+    if (auto status = decode_profiler->StopProfiling(); !status.HasValue()) {
+      ABSL_LOG(WARNING) << "Failed to stop decode profiler: "
+                        << status.Error().Message();
+    } else {
+      auto summary =
+          decode_profiler->GetProfileSummary(compiled_model_.Get());
+      auto events = decode_profiler->GetEvents();
+      if (!summary.HasValue()) {
+        ABSL_LOG(WARNING) << "Failed to get decode profile summary: "
+                          << summary.Error().Message();
+      } else if (!events.HasValue()) {
+        ABSL_LOG(WARNING) << "Failed to get decode profile events: "
+                          << events.Error().Message();
+      } else {
+        const std::filesystem::path summary_path(
+            dump_first_decode_profile_path);
+        if (auto dump_status =
+                DumpProfilerArtifacts(summary_path, *summary, *events);
+            !dump_status.ok()) {
+          ABSL_LOG(WARNING) << "Failed to dump decode profile artifacts: "
+                            << dump_status;
+        } else {
+          dumped_first_decode_profile_ = true;
+        }
+      }
+    }
+  }
+
+  if (dump_step_dir.has_value()) {
+    std::ofstream manifest(
+        ((*dump_step_dir) / "manifest.tsv").string(),
+        std::ios::app);
+    if (!manifest.is_open()) {
+      return absl::InternalError(absl::StrCat(
+          "Failed to reopen first-decode manifest file under ",
+          dump_step_dir->string()));
+    }
+    LITERT_RETURN_IF_ERROR(DumpTensorSubset(
+        decode_output_buffers, decode_output_buffers_, "decode_output",
+        *dump_step_dir, manifest));
+    LITERT_RETURN_IF_ERROR(DumpTensorSubset(
+        decode_output_buffers, *output_kv_cache_buffers_, "kv_output",
+        *dump_step_dir, manifest));
+    dumped_first_decode_tensors_ = true;
+  }
 
   if (!gpu_optimized_single_buffer_cache_) {
     std::swap(input_kv_cache_buffers_, output_kv_cache_buffers_);
@@ -996,7 +1524,17 @@ int LlmLiteRtCompiledModelExecutorBase::BindTensorsAndRunDecodeStatic(
 }
 
 absl::Status LlmLiteRtCompiledModelExecutorBase::PrepareFirstDecode() {
+  const bool profile_scoring = ShouldProfileScoring();
+  const absl::Time total_start_time = profile_scoring ? absl::Now() : absl::Time();
+  const int trace_step = llm_context_->runtime_state().current_step;
+  TracePhaseBegin(trace_step, kTracePrepareFirstDecode);
   if (llm_context_->runtime_state().ran_decode && !force_prepare_needed_) {
+    if (profile_scoring) {
+      ABSL_LOG(INFO) << "PrepareFirstDecode fast_path_ms="
+                     << absl::ToDoubleMilliseconds(absl::Now() -
+                                                   total_start_time);
+    }
+    TracePhaseEnd(trace_step, kTracePrepareFirstDecode);
     return absl::OkStatus();
   }
   force_prepare_needed_ = false;
@@ -1009,22 +1547,61 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::PrepareFirstDecode() {
   }
 
   if (output_heads <= 1) {
+    if (profile_scoring) {
+      ABSL_LOG(INFO) << "PrepareFirstDecode no_copy_path_ms="
+                     << absl::ToDoubleMilliseconds(absl::Now() -
+                                                   total_start_time)
+                     << " output_heads=" << output_heads;
+    }
+    TracePhaseEnd(trace_step, kTracePrepareFirstDecode);
     return absl::OkStatus();
   }
 
-  LITERT_RETURN_IF_ERROR(llm_context_->processed_context()
-                             .processed_tokens()
-                             .BroadcastTokenCandidates(output_heads));
+  if (output_heads > 1) {
+    TracePhaseBegin(trace_step, kTracePrepareFirstDecodeBroadcast);
+    const absl::Time broadcast_start_time =
+        profile_scoring ? absl::Now() : absl::Time();
+    LITERT_RETURN_IF_ERROR(llm_context_->processed_context()
+                               .processed_tokens()
+                               .BroadcastTokenCandidates(output_heads));
+    if (profile_scoring) {
+      ABSL_LOG(INFO) << "PrepareFirstDecode broadcast_ms="
+                     << absl::ToDoubleMilliseconds(absl::Now() -
+                                                   broadcast_start_time)
+                     << " output_heads=" << output_heads;
+    }
+    TracePhaseEnd(trace_step, kTracePrepareFirstDecodeBroadcast);
+  }
 
-  LITERT_RETURN_IF_ERROR(decode_kv_cache_buffers_1_.has_value());
-  LITERT_RETURN_IF_ERROR(decode_kv_cache_buffers_2_.has_value());
+  const bool has_dedicated_decode_kv_cache_buffers =
+      decode_kv_cache_buffers_1_.has_value() &&
+      decode_kv_cache_buffers_2_.has_value();
+  LITERT_RETURN_IF_ERROR(has_dedicated_decode_kv_cache_buffers);
   // Broadcast the prefill kv cache buffers to the decode kv cache buffers.
   // This is only needed when decode batch size > 1.
+  const absl::Time copy_start_time =
+      profile_scoring ? absl::Now() : absl::Time();
+  TracePhaseBegin(trace_step, kTracePrepareFirstDecodeCopyKv);
   LITERT_RETURN_IF_ERROR(CopyKvCacheBuffers(
       output_heads, /*src_index_to_copy_on_prefill=*/-1,
       *input_kv_cache_buffers_, *decode_kv_cache_buffers_1_));
+  if (profile_scoring) {
+    ABSL_LOG(INFO) << "PrepareFirstDecode copy_kv_ms="
+                   << absl::ToDoubleMilliseconds(absl::Now() -
+                                                 copy_start_time)
+                   << " output_heads=" << output_heads;
+  }
+  TracePhaseEnd(trace_step, kTracePrepareFirstDecodeCopyKv);
   input_kv_cache_buffers_ = &decode_kv_cache_buffers_1_.value();
   output_kv_cache_buffers_ = &decode_kv_cache_buffers_2_.value();
+
+  if (profile_scoring) {
+    ABSL_LOG(INFO) << "PrepareFirstDecode total_ms="
+                   << absl::ToDoubleMilliseconds(absl::Now() -
+                                                 total_start_time)
+                   << " output_heads=" << output_heads;
+  }
+  TracePhaseEnd(trace_step, kTracePrepareFirstDecode);
 
   return absl::OkStatus();
 }
@@ -1174,15 +1751,33 @@ absl::StatusOr<TensorBuffer> LlmLiteRtCompiledModelExecutorBase::DecodeLogits(
 
 absl::StatusOr<TensorBuffer> LlmLiteRtCompiledModelExecutorBase::DecodeLogits(
     const ExecutorInputs& inputs, const ExecutorDecodeParams& decode_params) {
+  const bool profile_scoring = ShouldProfileScoring();
+  const absl::Time total_start_time = profile_scoring ? absl::Now() : absl::Time();
   LITERT_ASSIGN_OR_RETURN(
       auto output_logits,
       decode_output_buffers_[signatures_.output_logits].Duplicate());
 
   bool last_run_is_decode = llm_context_->runtime_state().ran_decode;
+  const absl::Time prepare_start_time =
+      profile_scoring ? absl::Now() : absl::Time();
   RETURN_IF_ERROR(PrepareFirstDecode());
+  const absl::Time prepare_end_time =
+      profile_scoring ? absl::Now() : absl::Time();
+  const absl::Time token_start_time =
+      profile_scoring ? absl::Now() : absl::Time();
   ASSIGN_OR_RETURN(auto step_and_token, GetTokenToDecode(inputs));
+  const absl::Time token_end_time =
+      profile_scoring ? absl::Now() : absl::Time();
+  const absl::Time decode_start_time =
+      profile_scoring ? absl::Now() : absl::Time();
   RETURN_IF_ERROR(DecodeInternal(step_and_token.token, output_logits));
+  const absl::Time decode_end_time =
+      profile_scoring ? absl::Now() : absl::Time();
+  const absl::Time consume_start_time =
+      profile_scoring ? absl::Now() : absl::Time();
   RETURN_IF_ERROR(ConsumePendingOrAddProcessedToken(step_and_token.token));
+  const absl::Time consume_end_time =
+      profile_scoring ? absl::Now() : absl::Time();
 
   if (decode_params.HasConstraintDecoder() && !step_and_token.token.empty()) {
     int output_heads = 1;
@@ -1252,9 +1847,27 @@ absl::StatusOr<TensorBuffer> LlmLiteRtCompiledModelExecutorBase::DecodeLogits(
 
   const auto& settings = executor_settings_.GetAdvancedSettings();
   if (settings && settings->num_logits_to_print_after_decode > 0) {
-    LogTensor(output_logits, settings->num_logits_to_print_after_decode,
-              "Logits")
-        .IgnoreError();
+    if (absl::Status status =
+            LogTensor(output_logits, settings->num_logits_to_print_after_decode,
+                      "Logits");
+        !status.ok()) {
+      ABSL_LOG(WARNING) << "Failed to log logits tensor: " << status;
+    }
+  }
+  if (profile_scoring) {
+    ABSL_LOG(INFO)
+        << "DecodeLogits timings: prepare_ms="
+        << absl::ToDoubleMilliseconds(prepare_end_time - prepare_start_time)
+        << " get_token_ms="
+        << absl::ToDoubleMilliseconds(token_end_time - token_start_time)
+        << " decode_internal_ms="
+        << absl::ToDoubleMilliseconds(decode_end_time - decode_start_time)
+        << " consume_token_ms="
+        << absl::ToDoubleMilliseconds(consume_end_time - consume_start_time)
+        << " total_ms="
+        << absl::ToDoubleMilliseconds(absl::Now() - total_start_time)
+        << " last_run_is_decode=" << last_run_is_decode
+        << " token_count=" << step_and_token.token.size();
   }
   return output_logits;
 }
@@ -1365,8 +1978,13 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::SampleLogits(
     RETURN_IF_ERROR(SwapSamplerInputTensors());
   }
 
+  const int step = llm_context_->runtime_state().current_step - 1;
+  TracePhaseBegin(step, kTraceDecodeSampling);
+  BenchmarkMark(benchmark_info_, "llm_decode_sampling");
   RETURN_IF_ERROR(sampler_->SampleToIdAndScoreBuffer(
       logits, ids_tensor, /*scores_tensor=*/nullptr));
+  BenchmarkMark(benchmark_info_, "llm_decode_sampling");
+  TracePhaseEnd(step, kTraceDecodeSampling);
   return absl::OkStatus();
 }
 
@@ -1434,6 +2052,14 @@ absl::Status LlmLiteRtCompiledModelExecutorBase::SetCurrentStep(int new_step) {
 
 absl::Status LlmLiteRtCompiledModelExecutorBase::Reset() {
   llm_context_->runtime_state().current_step = 0;
+  llm_context_->runtime_state().ran_decode = false;
+  llm_context_->processed_context().processed_tokens() = ProcessedTokens();
+  input_kv_cache_buffers_ = &kv_cache_buffers_1_;
+  output_kv_cache_buffers_ = &kv_cache_buffers_2_;
+  force_prepare_needed_ = false;
+  if (sampler_ != nullptr && sampler_->HandlesInput()) {
+    RETURN_IF_ERROR(SetSamplerInputHandling(/*reset=*/true));
+  }
   return absl::OkStatus();
 }
 
@@ -1619,6 +2245,9 @@ LlmLiteRtCompiledModelExecutorStatic::Create(
     LITERT_ASSIGN_OR_RETURN(
         auto input_buffer,
         compiled_model.CreateInputBuffer(prefill_signature_key, input_name));
+    MaybeLogCompiledModelBufferCreation("prefill_setup", prefill_signature_key,
+                                        input_name,
+                                        /*is_input=*/true, input_buffer);
     if (clear_kv_cache_before_prefill) {
       LITERT_RETURN_IF_ERROR(input_buffer.Clear());
     }
@@ -1634,6 +2263,9 @@ LlmLiteRtCompiledModelExecutorStatic::Create(
         LITERT_ASSIGN_OR_RETURN(auto output_buffer,
                                 compiled_model.CreateOutputBuffer(
                                     prefill_signature_key, output_name));
+        MaybeLogCompiledModelBufferCreation("prefill_setup",
+                                            prefill_signature_key, output_name,
+                                            /*is_input=*/false, output_buffer);
         if (clear_kv_cache_before_prefill &&
             gpu_optimized_single_buffer_cache) {
           LITERT_RETURN_IF_ERROR(output_buffer.Clear());
@@ -1712,9 +2344,18 @@ LlmLiteRtCompiledModelExecutorStatic::Create(
       decode_input_kv_cache_buffers;
   std::optional<absl::flat_hash_map<absl::string_view, TensorBuffer>>
       decode_output_kv_cache_buffers;
-  if (batch_size > 1) {
-    ABSL_LOG(INFO) << "Decode batch size is larger than 1. Allocate decode "
-                   << "only KV cache buffers.";
+  const bool allocate_dedicated_decode_kv_cache_buffers =
+      batch_size > 1 ||
+      (backend == Backend::GPU && !gpu_optimized_single_buffer_cache);
+  if (allocate_dedicated_decode_kv_cache_buffers) {
+    if (batch_size > 1) {
+      ABSL_LOG(INFO) << "Decode batch size is larger than 1. Allocate decode "
+                     << "only KV cache buffers.";
+    } else {
+      ABSL_LOG(INFO)
+          << "GPU backend detected. Allocate dedicated decode KV cache "
+             "buffers to avoid reusing prefill buffers across signatures.";
+    }
     decode_input_kv_cache_buffers =
         absl::flat_hash_map<absl::string_view, TensorBuffer>();
     decode_output_kv_cache_buffers =
@@ -1725,6 +2366,9 @@ LlmLiteRtCompiledModelExecutorStatic::Create(
         LITERT_ASSIGN_OR_RETURN(auto input_buffer,
                                 compiled_model.CreateInputBuffer(
                                     kDecodeSignatureRunner, input_name));
+        MaybeLogCompiledModelBufferCreation("decode_setup",
+                                            kDecodeSignatureRunner, input_name,
+                                            /*is_input=*/true, input_buffer);
         if (clear_kv_cache_before_prefill) {
           LITERT_RETURN_IF_ERROR(input_buffer.Clear());
         }
@@ -1737,6 +2381,9 @@ LlmLiteRtCompiledModelExecutorStatic::Create(
         LITERT_ASSIGN_OR_RETURN(auto output_buffer,
                                 compiled_model.CreateOutputBuffer(
                                     kDecodeSignatureRunner, output_name));
+        MaybeLogCompiledModelBufferCreation("decode_setup",
+                                            kDecodeSignatureRunner, output_name,
+                                            /*is_input=*/false, output_buffer);
         (*decode_output_kv_cache_buffers)[output_name] =
             std::move(output_buffer);
       }
@@ -2015,6 +2662,13 @@ LlmLiteRtCompiledModelExecutorDynamic::Create(
     LITERT_ASSIGN_OR_RETURN(auto& runtime_options,
                             compilation_options.GetRuntimeOptions());
     runtime_options.SetCompressQuantizationZeroPoints(true);
+    AdvancedSettings advanced_settings;
+    if (executor_settings.GetAdvancedSettings()) {
+      advanced_settings = *executor_settings.GetAdvancedSettings();
+    }
+    if (!advanced_settings.dump_first_decode_profile_path.empty()) {
+      LITERT_RETURN_IF_ERROR(runtime_options.SetEnableProfiling(true));
+    }
     compilation_options.SetHardwareAccelerators(HwAccelerators::kCpu);
   }
 

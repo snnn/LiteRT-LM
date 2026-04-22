@@ -155,6 +155,7 @@ absl::Status MainHelper(int argc, char** argv) {
            "[--async=<true|false>] [--force_f32=<true|false] "
            "[--report_peak_memory_footprint] [--multi_turns=<true|false>] "
            "[--num_cpu_threads=<num_cpu_threads>] "
+           "[--cache_dir=<cache_dir>] "
            "[--gpu_external_tensor_mode=<true|false>] "
            "[--configure_magic_numbers=<true|false>] "
            "[--verify_magic_numbers=<true|false>] "
@@ -175,7 +176,8 @@ absl::Status MainHelper(int argc, char** argv) {
            "[--disable_cache=<true|false>]"
            "[--cache_compiled_shader_only=<true|false>]"
            "[--conv_type=<auto|float|int8>]"
-           "[--enable_speculative_decoding=<true|false>]";
+           "[--enable_speculative_decoding=<true|false>]"
+           "[--dump_first_decode_tensors_dir=<dump_dir>]";
     ABSL_LOG(INFO)
         << "To provide data for multimodality, use [image:/path/to/image.jpg] "
            "or [audio:/path/to/audio.wav] in the input prompt. e.g. \"Describe "
@@ -215,6 +217,7 @@ absl::Status MainHelper(int argc, char** argv) {
   settings.force_f32 = absl::GetFlag(FLAGS_force_f32);
   settings.multi_turns = absl::GetFlag(FLAGS_multi_turns);
   settings.num_cpu_threads = absl::GetFlag(FLAGS_num_cpu_threads);
+  settings.cache_dir = absl::GetFlag(FLAGS_cache_dir);
   settings.gpu_external_tensor_mode =
       absl::GetFlag(FLAGS_gpu_external_tensor_mode);
   settings.configure_magic_numbers =
@@ -253,6 +256,10 @@ absl::Status MainHelper(int argc, char** argv) {
   settings.use_submodel = absl::GetFlag(FLAGS_use_submodel);
   settings.enable_speculative_decoding =
       absl::GetFlag(FLAGS_enable_speculative_decoding);
+  settings.dump_first_decode_tensors_dir =
+      absl::GetFlag(FLAGS_dump_first_decode_tensors_dir);
+  settings.dump_first_decode_profile_path =
+      absl::GetFlag(FLAGS_dump_first_decode_profile_path);
 
   // Adjust max_num_tokens and prefill_batch_size if not set on benchmark mode.
   if (settings.benchmark && settings.benchmark_prefill_tokens > 0) {

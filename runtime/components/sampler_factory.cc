@@ -584,6 +584,14 @@ absl::StatusOr<std::unique_ptr<Sampler>> CreateCpuSampler(
       ABSL_LOG(INFO) << "Sampler type is unspecified. Assume the LLM Executor "
                         "handles the sampling logic.";
       return nullptr;
+    case proto::SamplerParameters::GREEDY:
+      return TopPSampler::Create(/*k=*/1, /*p=*/1.0f, /*temperature=*/0.0f,
+                                 batch_size, sequence_size,
+                                 sampler_params.seed());
+    case proto::SamplerParameters::TOP_K:
+      return TopPSampler::Create(
+          sampler_params.k(), /*p=*/1.0f, sampler_params.temperature(),
+          batch_size, sequence_size, sampler_params.seed());
     case proto::SamplerParameters::TOP_P:
       return TopPSampler::Create(sampler_params.k(), sampler_params.p(),
                                  sampler_params.temperature(), batch_size,

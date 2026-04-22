@@ -26,7 +26,8 @@ Usage example:
   bazel run //python/litert_lm_eval:litert_lm_eval \
       --model_path /path/to/model.litertlm \
       --tasks mmlu,gsm8k \
-      --backend CPU \
+      --backend GPU \
+      --prompt_mode raw \
       --output_path /path/to/save/results.json
 
   # Using the escape hatch for framework-specific arguments
@@ -65,6 +66,13 @@ def main():
       choices=["CPU", "GPU"],
       help="Backend to use (e.g., 'CPU', 'GPU').",
   )
+  parser.add_argument(
+      "--prompt_mode",
+      type=str,
+      default="raw",
+      choices=["raw", "bundle"],
+      help="Prompt formatting mode for the LiteRT-LM backend.",
+  )
 
   parser.add_argument(
       "--num_fewshot",
@@ -100,7 +108,10 @@ def main():
   args, unknown = parser.parse_known_args()
 
   # Construct the model_args string required by lm_eval.
-  model_args_str = f"model_path={args.model_path},backend={args.backend}"
+  model_args_str = (
+      f"pretrained={args.model_path},backend={args.backend},"
+      f"prompt_mode={args.prompt_mode.lower()}"
+  )
 
   if args.framework_args:
     model_args_str += f",{args.framework_args}"
@@ -113,7 +124,7 @@ def main():
   print(f"Running evaluation with model 'litert_lm' on tasks: {tasks}")
 
   results = lm_eval.simple_evaluate(
-      model="litert_lm",
+      model="litert-lm",
       model_args=model_args_str,
       tasks=tasks,
       num_fewshot=args.num_fewshot,

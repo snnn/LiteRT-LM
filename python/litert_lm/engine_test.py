@@ -219,11 +219,11 @@ class EngineTest(LiteRtLmTestBase):
   def test_create_session_with_options(self):
     with self._create_engine() as engine:
       with engine.create_session(
-          litert_lm.SessionOptions(apply_prompt_template_in_session=True)
+          litert_lm.SessionOptions(apply_prompt_template=True)
       ) as session:
         self.assertIsInstance(session, litert_lm.AbstractSession)
       with engine.create_session(
-          litert_lm.SessionOptions(apply_prompt_template_in_session=False)
+          litert_lm.SessionOptions(apply_prompt_template=False)
       ) as session:
         self.assertIsInstance(session, litert_lm.AbstractSession)
 

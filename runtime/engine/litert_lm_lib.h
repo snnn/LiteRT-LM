@@ -121,6 +121,8 @@ struct LiteRtLmSettings {
   std::string constraint_regex = "";
   bool use_submodel = false;
   bool enable_speculative_decoding = false;
+  std::string dump_first_decode_tensors_dir = "";
+  std::string dump_first_decode_profile_path = "";
 };
 
 struct LitertLmMetrics {

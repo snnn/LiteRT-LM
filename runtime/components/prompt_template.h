@@ -82,6 +82,10 @@ struct PromptTemplateInput {
   // the model to generate the response. Default to true.
   bool add_generation_prompt = true;
 
+  // Whether the final message should be treated as an in-progress assistant
+  // message whose content should be continued rather than closed.
+  bool continue_final_message = false;
+
   // The extra context to the model. This leaves the template to be able to
   // use extra variables, e.g. enabling thinking mode, or extra settings.
   nlohmann::ordered_json extra_context;

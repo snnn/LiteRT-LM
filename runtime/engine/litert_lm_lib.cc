@@ -557,6 +557,9 @@ absl::StatusOr<EngineSettings> CreateEngineSettings(
       .share_constant_tensors = settings.share_constant_tensors,
       .sampler_handles_input = settings.sampler_handles_input,
       .enable_speculative_decoding = settings.enable_speculative_decoding,
+      .dump_first_decode_tensors_dir = settings.dump_first_decode_tensors_dir,
+      .dump_first_decode_profile_path =
+          settings.dump_first_decode_profile_path,
   };
   if (settings.conv_type == ConvType::kFloat) {
     advanced_settings.allow_src_quantized_fc_conv_ops = false;

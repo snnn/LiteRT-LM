@@ -207,6 +207,61 @@ TEST(LlmLiteRtCompiledModelExecutorStaticTest, DecodeTest) {
   }
 }
 
+TEST(LlmLiteRtCompiledModelExecutorStaticTest, ResetClearsSessionState) {
+  auto model_path =
+      std::filesystem::path(::testing::SrcDir()) / kTestStaticModelPath;
+  ASSERT_OK_AND_ASSIGN(auto model_resources,
+                       CreateExecutorModelResourcesTask(model_path.string()));
+  ASSERT_OK_AND_ASSIGN(auto model_assets,
+                       ModelAssets::Create(model_path.string()));
+  auto executor_settings =
+      LlmExecutorSettings::CreateDefault(model_assets, Backend::CPU);
+  executor_settings->SetCacheDir(":nocache");
+  executor_settings->SetMaxNumTokens(kMaxNumTokens);
+  ::litert::lm::CpuConfig config;
+  config.number_of_threads = kNumThreads;
+  executor_settings->SetBackendConfig(config);
+  LITERT_ASSERT_OK_AND_ASSIGN(
+      auto env, Environment::Create(std::vector<Environment::Option>()));
+  ASSERT_OK_AND_ASSIGN(auto executor,
+                       LlmLiteRtCompiledModelExecutorStatic::Create(
+                           *executor_settings, env, *model_resources));
+  ASSERT_NE(executor, nullptr);
+
+  ExecutorInputs inputs;
+  const std::vector<int> input_tokens = {1, 2, 0};
+  LITERT_ASSERT_OK_AND_ASSIGN(
+      auto input_tokens_buffer,
+      CopyToTensorBuffer<int>(absl::MakeSpan(input_tokens), {1, 3}));
+  inputs.SetTextData(ExecutorTextData(std::move(input_tokens_buffer)));
+
+  EXPECT_OK(executor->Prefill(inputs));
+  ASSERT_OK(executor->Decode());
+
+  ASSERT_OK(executor->Reset());
+  ASSERT_OK_AND_ASSIGN(auto current_step, executor->GetCurrentStep());
+  EXPECT_EQ(current_step, 0);
+  auto step_and_token =
+      executor->processed_tokens_for_testing().GetNextUnprocessedToken();
+  EXPECT_EQ(step_and_token.step, 0);
+  EXPECT_TRUE(step_and_token.token.empty());
+
+  ExecutorInputs inputs_after_reset;
+  LITERT_ASSERT_OK_AND_ASSIGN(
+      auto input_tokens_buffer_after_reset,
+      CopyToTensorBuffer<int>(absl::MakeSpan(input_tokens), {1, 3}));
+  inputs_after_reset.SetTextData(
+      ExecutorTextData(std::move(input_tokens_buffer_after_reset)));
+  EXPECT_OK(executor->Prefill(inputs_after_reset));
+  ASSERT_OK_AND_ASSIGN(current_step, executor->GetCurrentStep());
+  EXPECT_EQ(current_step, 3);
+  step_and_token =
+      executor->processed_tokens_for_testing().GetNextUnprocessedToken();
+  EXPECT_EQ(step_and_token.step, 2);
+  ASSERT_EQ(step_and_token.token.size(), 1);
+  EXPECT_EQ(step_and_token.token[0]->id(), 0);
+}
+
 TEST(LlmLiteRtCompiledModelExecutorStaticTest, ConstrainedDecodeTest) {
   auto model_path =
       std::filesystem::path(::testing::SrcDir()) / kTestStaticModelPath;
@@ -518,14 +573,14 @@ TEST(LlmLiteRtCompiledModelExecutorStaticTest, MultipleOutput_Decode) {
   const std::filesystem::path model_path =
       std::filesystem::path(::testing::SrcDir()) /
       "litert_lm/runtime/testdata/magic_test_decode_batch.tflite";
-  auto model_assets = ModelAssets::Create(model_path.string());
-  ASSERT_OK(model_assets);
-  auto executor_settings = LlmExecutorSettings::CreateDefault(*model_assets);
+  ASSERT_OK_AND_ASSIGN(auto model_assets,
+                       ModelAssets::Create(model_path.string()));
+  auto executor_settings = LlmExecutorSettings::CreateDefault(model_assets);
   ASSERT_OK(executor_settings);
   auto env = Environment::Create(std::vector<Environment::Option>());
   LITERT_ASSERT_OK(env);
   ASSERT_OK_AND_ASSIGN(auto model_resources,
-                       TfLiteModelResources::Create(*model_assets));
+                       TfLiteModelResources::Create(model_assets));
 
   ASSERT_OK_AND_ASSIGN(
       auto executor,
@@ -595,14 +650,14 @@ TEST(LlmLiteRtCompiledModelExecutorStaticTest,
   const std::filesystem::path model_path =
       std::filesystem::path(::testing::SrcDir()) /
       "litert_lm/runtime/testdata/magic_test_decode_batch.tflite";
-  auto model_assets = ModelAssets::Create(model_path.string());
-  ASSERT_OK(model_assets);
-  auto executor_settings = LlmExecutorSettings::CreateDefault(*model_assets);
+  ASSERT_OK_AND_ASSIGN(auto model_assets,
+                       ModelAssets::Create(model_path.string()));
+  auto executor_settings = LlmExecutorSettings::CreateDefault(model_assets);
   ASSERT_OK(executor_settings);
   auto env = Environment::Create(std::vector<Environment::Option>());
   LITERT_ASSERT_OK(env);
   ASSERT_OK_AND_ASSIGN(auto model_resources,
-                       TfLiteModelResources::Create(*model_assets));
+                       TfLiteModelResources::Create(model_assets));
   auto executor = LlmLiteRtCompiledModelExecutorStatic::Create(
       std::move(*executor_settings), *env, *model_resources);
   EXPECT_OK(executor);
@@ -691,15 +746,16 @@ TEST(LlmLiteRtCompiledModelExecutorStaticTest,
   const std::filesystem::path model_path =
       std::filesystem::path(::testing::SrcDir()) /
       "litert_lm/runtime/testdata/magic_test_decode_batch.tflite";
-  auto model_assets = ModelAssets::Create(model_path.string());
-  ASSERT_OK(model_assets);
-  auto executor_settings = LlmExecutorSettings::CreateDefault(*model_assets);
+  ASSERT_OK_AND_ASSIGN(auto model_assets,
+                       ModelAssets::Create(model_path.string()));
+  auto executor_settings = LlmExecutorSettings::CreateDefault(model_assets);
   ASSERT_OK(executor_settings);
   auto env = Environment::Create(std::vector<Environment::Option>());
   ASSERT_TRUE(env);
-  TfLiteModelResources model_resources(*model_assets);
+  ASSERT_OK_AND_ASSIGN(auto model_resources,
+                       TfLiteModelResources::Create(model_assets));
   auto executor = LlmLiteRtCompiledModelExecutorStatic::Create(
-      std::move(*executor_settings), *env, model_resources);
+      std::move(*executor_settings), *env, *model_resources);
   ASSERT_OK(executor);
   ASSERT_TRUE(*executor);
 
@@ -754,14 +810,14 @@ TEST(LlmLiteRtCompiledModelExecutorStaticTest,
   const std::filesystem::path model_path =
       std::filesystem::path(::testing::SrcDir()) /
       "litert_lm/runtime/testdata/magic_test_decode_batch.tflite";
-  auto model_assets = ModelAssets::Create(model_path.string());
-  ASSERT_OK(model_assets);
-  auto executor_settings = LlmExecutorSettings::CreateDefault(*model_assets);
+  ASSERT_OK_AND_ASSIGN(auto model_assets,
+                       ModelAssets::Create(model_path.string()));
+  auto executor_settings = LlmExecutorSettings::CreateDefault(model_assets);
   ASSERT_OK(executor_settings);
   auto env = Environment::Create(std::vector<Environment::Option>());
   LITERT_ASSERT_OK(env);
   ASSERT_OK_AND_ASSIGN(auto model_resources,
-                       TfLiteModelResources::Create(*model_assets));
+                       TfLiteModelResources::Create(model_assets));
   auto executor = LlmLiteRtCompiledModelExecutorStatic::Create(
       std::move(*executor_settings), *env, *model_resources);
   EXPECT_OK(executor);

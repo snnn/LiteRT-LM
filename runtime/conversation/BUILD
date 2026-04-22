@@ -38,7 +38,7 @@ cc_library(
         "@com_google_absl//absl/status",
         "@nlohmann_json//:json",
         "//runtime/components:prompt_template",
-        "//runtime/conversation/model_data_processor",
+        "//runtime/conversation/model_data_processor:message_formatter",
         "//runtime/util:litert_status_util",
     ],
 )
@@ -55,6 +55,30 @@ cc_library(
         "@com_google_absl//absl/strings:string_view",
         "//runtime/engine:io_types",
         "@com_googlesource_code_re2//:re2",
+    ],
+)
+
+cc_library(
+    name = "prompt_api",
+    srcs = ["prompt_api.cc"],
+    hdrs = ["prompt_api.h"],
+    deps = [
+        ":io_types",
+        ":prompt_utils",
+        "@com_googlesource_code_re2//:re2",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:string_view",
+        "@nlohmann_json//:json",
+        "//runtime/components:prompt_template",
+        "//runtime/conversation/model_data_processor:data_processor_config_factory",
+        "//runtime/conversation/model_data_processor:message_formatter",
+        "//runtime/conversation/model_data_processor:message_formatter_factory",
+        "//runtime/proto:llm_metadata_cc_proto",
+        "//runtime/proto:llm_model_type_cc_proto",
+        "//runtime/util:prompt_template_utils",
+        "//runtime/util:litert_status_util",
     ],
 )
 

@@ -475,9 +475,12 @@ absl::StatusOr<Responses> SessionBasic::DecodeInternal(
         ApplyPromptTemplates(contents, ContentType::kLast, session_config_,
                              tokenizer_, /*is_first_turn=*/false));
     if (!templated_contents.empty()) {
+      // Benchmark prefill length applies only to the user prompt prefill. The
+      // final assistant-turn scaffold is intentionally short and should not be
+      // forced through benchmark-length validation.
       ASSIGN_OR_RETURN(std::vector<InputData> preprocessed_contents,
                        PreprocessContents(templated_contents, session_config_,
-                                          tokenizer_, benchmark_info_));
+                                          tokenizer_, std::nullopt));
       RETURN_IF_ERROR(PrefillInternal(preprocessed_contents,
                                       /*wait_for_completion=*/true));
     }
@@ -612,27 +615,47 @@ absl::StatusOr<Responses> SessionBasic::RunTextScoringSequentially(
   ASSIGN_OR_RETURN(auto original_runtime_config, executor_.GetRuntimeConfig());
   RuntimeConfig single_head_runtime_config = original_runtime_config;
   single_head_runtime_config.output_heads = 1;
+  absl::Status scoring_status = absl::OkStatus();
 
   for (const auto& single_target : target_text) {
     benchmark_info_ = benchmark_info_before;
-    RETURN_IF_ERROR(executor_.UpdateRuntimeConfig(single_head_runtime_config));
-    RETURN_IF_ERROR(ResetAndReplayPrefillHistory());
+    scoring_status = executor_.UpdateRuntimeConfig(single_head_runtime_config);
+    if (!scoring_status.ok()) break;
+    scoring_status = ResetAndReplayPrefillHistory();
+    if (!scoring_status.ok()) break;
+
     std::vector<int> decoded_ids(1, last_prefill_token_id_);
-    LITERT_ASSIGN_OR_RETURN(auto decoded_ids_buffer,
-                            CopyToTensorBuffer<int>(decoded_ids, {1, 1}));
-    ASSIGN_OR_RETURN(
-        auto single_response,
-        ScoreCustomSampling(executor_, tokenizer_, {single_target},
-                            /*temperature=*/1.0f,
-                            std::move(decoded_ids_buffer),
-                            store_token_lengths));
-    RETURN_IF_ERROR(
-        AppendSingleScoringResponse(single_response, collected_responses));
+    auto decoded_ids_buffer = CopyToTensorBuffer<int>(decoded_ids, {1, 1});
+    if (!decoded_ids_buffer.HasValue()) {
+      scoring_status =
+          absl::InternalError(decoded_ids_buffer.Error().Message());
+      break;
+    }
+
+    auto single_response = ScoreCustomSampling(
+        executor_, tokenizer_, {single_target},
+        /*temperature=*/1.0f, std::move(decoded_ids_buffer.Value()),
+        store_token_lengths);
+    if (!single_response.ok()) {
+      scoring_status = single_response.status();
+      break;
+    }
+    scoring_status =
+        AppendSingleScoringResponse(*single_response, collected_responses);
+    if (!scoring_status.ok()) break;
   }
 
   benchmark_info_ = benchmark_info_before;
-  RETURN_IF_ERROR(executor_.UpdateRuntimeConfig(original_runtime_config));
-  RETURN_IF_ERROR(ResetAndReplayPrefillHistory());
+  absl::Status restore_status = executor_.UpdateRuntimeConfig(
+      original_runtime_config);
+  restore_status.Update(ResetAndReplayPrefillHistory());
+  if (!restore_status.ok()) {
+    if (scoring_status.ok()) {
+      return restore_status;
+    }
+    scoring_status.Update(restore_status);
+  }
+  RETURN_IF_ERROR(scoring_status);
   return collected_responses;
 }
 
@@ -695,27 +718,47 @@ absl::StatusOr<Responses> SessionBasic::RunTokenIdScoringSequentially(
   ASSIGN_OR_RETURN(auto original_runtime_config, executor_.GetRuntimeConfig());
   RuntimeConfig single_head_runtime_config = original_runtime_config;
   single_head_runtime_config.output_heads = 1;
+  absl::Status scoring_status = absl::OkStatus();
 
   for (const auto& single_target : target_token_ids) {
     benchmark_info_ = benchmark_info_before;
-    RETURN_IF_ERROR(executor_.UpdateRuntimeConfig(single_head_runtime_config));
-    RETURN_IF_ERROR(ResetAndReplayPrefillHistory());
+    scoring_status = executor_.UpdateRuntimeConfig(single_head_runtime_config);
+    if (!scoring_status.ok()) break;
+    scoring_status = ResetAndReplayPrefillHistory();
+    if (!scoring_status.ok()) break;
+
     std::vector<int> decoded_ids(1, last_prefill_token_id_);
-    LITERT_ASSIGN_OR_RETURN(auto decoded_ids_buffer,
-                            CopyToTensorBuffer<int>(decoded_ids, {1, 1}));
-    ASSIGN_OR_RETURN(
-        auto single_response,
-        ScoreCustomSamplingTokenIds(executor_, {single_target},
-                                    /*temperature=*/1.0f,
-                                    std::move(decoded_ids_buffer),
-                                    store_token_lengths));
-    RETURN_IF_ERROR(
-        AppendSingleScoringResponse(single_response, collected_responses));
+    auto decoded_ids_buffer = CopyToTensorBuffer<int>(decoded_ids, {1, 1});
+    if (!decoded_ids_buffer.HasValue()) {
+      scoring_status =
+          absl::InternalError(decoded_ids_buffer.Error().Message());
+      break;
+    }
+
+    auto single_response = ScoreCustomSamplingTokenIds(
+        executor_, {single_target},
+        /*temperature=*/1.0f, std::move(decoded_ids_buffer.Value()),
+        store_token_lengths);
+    if (!single_response.ok()) {
+      scoring_status = single_response.status();
+      break;
+    }
+    scoring_status =
+        AppendSingleScoringResponse(*single_response, collected_responses);
+    if (!scoring_status.ok()) break;
   }
 
   benchmark_info_ = benchmark_info_before;
-  RETURN_IF_ERROR(executor_.UpdateRuntimeConfig(original_runtime_config));
-  RETURN_IF_ERROR(ResetAndReplayPrefillHistory());
+  absl::Status restore_status = executor_.UpdateRuntimeConfig(
+      original_runtime_config);
+  restore_status.Update(ResetAndReplayPrefillHistory());
+  if (!restore_status.ok()) {
+    if (scoring_status.ok()) {
+      return restore_status;
+    }
+    scoring_status.Update(restore_status);
+  }
+  RETURN_IF_ERROR(scoring_status);
   return collected_responses;
 }
 

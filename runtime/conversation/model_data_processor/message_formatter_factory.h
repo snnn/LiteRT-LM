@@ -12,27 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef THIRD_PARTY_ODML_LITERT_LM_RUNTIME_CONVERSATION_PROMPT_UTILS_H_
-#define THIRD_PARTY_ODML_LITERT_LM_RUNTIME_CONVERSATION_PROMPT_UTILS_H_
+#ifndef THIRD_PARTY_ODML_LITERT_LM_RUNTIME_CONVERSATION_MODEL_DATA_PROCESSOR_MESSAGE_FORMATTER_FACTORY_H_
+#define THIRD_PARTY_ODML_LITERT_LM_RUNTIME_CONVERSATION_MODEL_DATA_PROCESSOR_MESSAGE_FORMATTER_FACTORY_H_
 
-#include "absl/status/status.h"  // from @com_google_absl
+#include <memory>
+#include <optional>
+
+#include "absl/status/statusor.h"  // from @com_google_absl
 #include "runtime/components/prompt_template.h"
 #include "runtime/conversation/io_types.h"
+#include "runtime/conversation/model_data_processor/config_registry.h"
 #include "runtime/conversation/model_data_processor/message_formatter.h"
 
 namespace litert::lm {
 
-// Fills the preface for the prompt template input.
-// Args:
-// - `preface`: The preface to be filled.
-// - `model_data_processor`: The model data processor to be used.
-// - `tmpl_input`: The prompt template input object reference to be filled.
-// Returns:
-// - An error status if the preface cannot be filled.
-absl::Status FillPrefaceForPromptTemplateInput(
-    const Preface& preface, const MessageFormatter* message_formatter,
-    PromptTemplateInput& tmpl_input);
+absl::StatusOr<std::unique_ptr<MessageFormatter>> CreateMessageFormatter(
+    const DataProcessorConfig& config,
+    std::optional<Preface> preface = std::nullopt,
+    PromptTemplateCapabilities capabilities = PromptTemplateCapabilities());
 
 }  // namespace litert::lm
 
-#endif  // THIRD_PARTY_ODML_LITERT_LM_RUNTIME_CONVERSATION_PROMPT_UTILS_H_
+#endif  // THIRD_PARTY_ODML_LITERT_LM_RUNTIME_CONVERSATION_MODEL_DATA_PROCESSOR_MESSAGE_FORMATTER_FACTORY_H_

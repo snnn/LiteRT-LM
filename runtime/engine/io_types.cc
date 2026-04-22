@@ -276,10 +276,13 @@ absl::Status BenchmarkInfo::InitPhaseRecord(InitPhase phase,
 }
 
 absl::Status BenchmarkInfo::TimeMarkDelta(const std::string& mark_name) {
+  const absl::Time now = absl::Now();
   if (mark_time_map_.contains(mark_name)) {
-    mark_durations_[mark_name] = absl::Now() - mark_time_map_[mark_name];
+    mark_durations_[mark_name] += now - mark_time_map_[mark_name];
+    mark_time_map_.erase(mark_name);
+  } else {
+    mark_time_map_[mark_name] = now;
   }
-  mark_time_map_[mark_name] = absl::Now();
   return absl::OkStatus();
 }
 

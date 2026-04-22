@@ -900,6 +900,25 @@ TEST(BenchmarkInfoTests, AddMarks) {
             absl::Milliseconds(400));
 }
 
+TEST(BenchmarkInfoTests, AddMarksAcrossMultipleIntervals) {
+  BenchmarkInfo benchmark_info(GetBenchmarkParams());
+  EXPECT_OK(benchmark_info.TimeMarkDelta("sampling"));
+  absl::SleepFor(absl::Milliseconds(40));
+  EXPECT_OK(benchmark_info.TimeMarkDelta("sampling"));
+  absl::SleepFor(absl::Milliseconds(20));
+  EXPECT_OK(benchmark_info.TimeMarkDelta("sampling"));
+  absl::SleepFor(absl::Milliseconds(40));
+  EXPECT_OK(benchmark_info.TimeMarkDelta("sampling"));
+
+  ASSERT_EQ(benchmark_info.GetMarkDurations().size(), 1);
+  const absl::Duration sampling = benchmark_info.GetMarkDurations().at("sampling");
+
+  // Two measured windows of about 40ms each should accumulate, but the 20ms
+  // gap between them should not.
+  EXPECT_GT(sampling, absl::Milliseconds(70));
+  EXPECT_LT(sampling, absl::Milliseconds(110));
+}
+
 TEST(BenchmarkInfoTests, AddTwoMarks) {
   BenchmarkInfo benchmark_info(GetBenchmarkParams());
   EXPECT_OK(benchmark_info.TimeMarkDelta("tokenize"));

@@ -20,7 +20,7 @@ from .interfaces import AbstractEngine
 from .interfaces import AbstractSession
 from .interfaces import Backend
 from .interfaces import BenchmarkInfo
-from .interfaces import DecodeOptions
+from .interfaces import GenerateConfig
 from .interfaces import Responses
 from .interfaces import SessionOptions
 from .interfaces import Tool
@@ -56,8 +56,8 @@ __all__ = (
     "Benchmark",
     "BenchmarkInfo",
     "Conversation",
-    "DecodeOptions",
     "Engine",
+    "GenerateConfig",
     "LogSeverity",
     "Responses",
     "Session",

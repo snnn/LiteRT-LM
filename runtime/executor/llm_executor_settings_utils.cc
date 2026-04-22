@@ -283,6 +283,9 @@ absl::StatusOr<litert::Options> CreateCompilationOptions(
       if (executor_settings.GetAdvancedSettings()) {
         advanced_settings = *executor_settings.GetAdvancedSettings();
       }
+      if (!advanced_settings.dump_first_decode_profile_path.empty()) {
+        LITERT_RETURN_IF_ERROR(runtime_options.SetEnableProfiling(true));
+      }
       runtime_options.SetDisableDelegateClustering(
           advanced_settings.disable_delegate_clustering);
       compilation_options.SetHardwareAccelerators(HwAccelerators::kCpu);

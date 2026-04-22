@@ -76,6 +76,7 @@ cc_binary(
         "//runtime/components:tokenizer",
         "//runtime/conversation",
         "//runtime/conversation:io_types",
+        "//runtime/conversation:prompt_api",
         "//runtime/core:engine_impl",
         "//runtime/engine:engine_factory",
         "//runtime/engine:engine_interface",
@@ -86,7 +87,15 @@ cc_binary(
         "//runtime/proto:token_cc_proto",
         "@rules_python//python/cc:current_py_cc_headers",  # buildcleaner: keep
         "@litert//tflite:minimal_logging",
-    ],
+    ] + select({
+        "@litert//litert:litert_link_capi_so": [
+            # Keep the extension on LiteRT's dynamic runtime path so buffer
+            # context and other runtime code resolve through the packaged
+            # libLiteRt.so instead of being statically pulled into the module.
+            "@litert//litert/cc:litert_api_with_dynamic_runtime",
+        ],
+        "//conditions:default": [],
+    }),
 )
 
 pytype_strict_library(
@@ -157,6 +166,7 @@ genrule(
         if [ $${#SRCS_ARRAY[@]} -gt 0 ]; then
             for i in $${!SRCS_ARRAY[@]}; do
                 cp $${SRCS_ARRAY[$$i]} $${OUTS_ARRAY[$$i]}
+                chmod u+w $${OUTS_ARRAY[$$i]}
                 # Set the rpath to '$$ORIGIN'
                 patchelf --set-rpath '$$ORIGIN' $${OUTS_ARRAY[$$i]}
             done

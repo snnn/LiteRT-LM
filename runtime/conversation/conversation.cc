@@ -43,6 +43,7 @@
 #include "runtime/conversation/internal_callback_util.h"
 #include "runtime/conversation/io_types.h"
 #include "runtime/conversation/model_data_processor/config_registry.h"
+#include "runtime/conversation/model_data_processor/data_processor_config_factory.h"
 #include "runtime/conversation/model_data_processor/model_data_processor.h"
 #include "runtime/conversation/model_data_processor/model_data_processor_factory.h"
 #include "runtime/conversation/prompt_utils.h"
@@ -155,10 +156,8 @@ absl::StatusOr<ConversationConfig> ConversationConfig::CreateInternal(
 
   DataProcessorConfig processor_config;
   if (overwrite_processor_config.has_value()) {
-    // Use the overwrite processor config if provided.
     processor_config = *overwrite_processor_config;
   } else {
-    // Build the processor config from the model metadata.
     ASSIGN_OR_RETURN(processor_config,
                      CreateDataProcessorConfigFromLlmModelType(
                          session_config_copy.GetLlmModelType()));

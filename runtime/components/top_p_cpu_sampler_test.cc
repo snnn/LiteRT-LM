@@ -337,5 +337,36 @@ TEST(TopPSamplerTest, UpdateConfig) {
   EXPECT_NE(ids.Value()[0], 4);
 }
 
+TEST(TopPSamplerTest, UpdateConfigWithGreedyUsesArgmax) {
+  auto sampler_or = TopPSampler::Create(/*k=*/8, /*p=*/1.0, /*temperature=*/1.0,
+                                        /*batch_size=*/1, /*sequence_size=*/1,
+                                        /*seed=*/2);
+  ASSERT_TRUE(sampler_or.ok());
+  auto sampler = *std::move(sampler_or);
+
+  proto::SamplerParameters sampler_params;
+  sampler_params.set_type(proto::SamplerParameters::GREEDY);
+
+  auto status = sampler->UpdateConfig(sampler_params,
+                                      /*batch_size=*/1, nullptr);
+  ASSERT_TRUE(status.ok());
+
+  const std::vector<float> logits = {0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0};
+  auto logits_tensor = CopyToTensorBuffer<float>(logits, {1, 8});
+
+  std::vector<int> ids_vector = {0, 1, 2, 3, 4, 5, 6, 7};
+  auto ids_tensor =
+      CopyToTensorBuffer<int>(absl::MakeConstSpan(ids_vector), {1, 8});
+  ASSERT_TRUE(ids_tensor.HasValue());
+
+  status = sampler->SampleToIdAndScoreBuffer(*logits_tensor, ids_tensor.Value(),
+                                             /*scores_tensor=*/nullptr);
+  ASSERT_TRUE(status.ok());
+
+  auto ids = CopyFromTensorBuffer<int>(ids_tensor.Value());
+  ASSERT_TRUE(ids.HasValue());
+  EXPECT_EQ(ids.Value()[0], 4);
+}
+
 }  // namespace
 }  // namespace litert::lm

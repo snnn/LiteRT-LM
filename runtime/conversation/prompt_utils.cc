@@ -20,13 +20,13 @@
 #include "nlohmann/json.hpp"  // from @nlohmann_json
 #include "runtime/components/prompt_template.h"
 #include "runtime/conversation/io_types.h"
-#include "runtime/conversation/model_data_processor/model_data_processor.h"
+#include "runtime/conversation/model_data_processor/message_formatter.h"
 #include "runtime/util/status_macros.h"
 
 namespace litert::lm {
 
 absl::Status FillPrefaceForPromptTemplateInput(
-    const Preface& preface, const ModelDataProcessor* model_data_processor,
+    const Preface& preface, const MessageFormatter* message_formatter,
     PromptTemplateInput& tmpl_input) {
   if (std::holds_alternative<JsonPreface>(preface)) {
     auto json_preface = std::get<JsonPreface>(preface);
@@ -34,7 +34,7 @@ absl::Status FillPrefaceForPromptTemplateInput(
     if (json_preface.messages.is_array()) {
       for (auto& message : json_preface.messages) {
         ASSIGN_OR_RETURN(nlohmann::ordered_json message_tmpl_input,
-                         model_data_processor->MessageToTemplateInput(message));
+                         message_formatter->MessageToTemplateInput(message));
         tmpl_input.messages.push_back(message_tmpl_input);
       }
     }
@@ -43,7 +43,7 @@ absl::Status FillPrefaceForPromptTemplateInput(
       tmpl_input.tools = nullptr;
     } else {
       ASSIGN_OR_RETURN(tmpl_input.tools,
-                       model_data_processor->FormatTools(json_preface.tools));
+                       message_formatter->FormatTools(json_preface.tools));
     }
     tmpl_input.extra_context = json_preface.extra_context;
   } else {

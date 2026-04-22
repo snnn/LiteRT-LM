@@ -1,5 +1,5 @@
 {
-  "checksum": "20049f10a79f00181a9539fea0856272132a35998d3a9b121911c98310f8fe8a",
+  "checksum": "d216a95298d88702f6f1725e8d2ed98b33c1565aef117c3b031f4bc510bd7678",
   "crates": {
     "ahash 0.8.12": {
       "name": "ahash",
@@ -3534,7 +3534,10 @@
       "repository": {
         "Http": {
           "url": "https://static.crates.io/crates/link-cplusplus/1.0.12/download",
-          "sha256": "7f78c730aaa7d0b9336a299029ea49f9ee53b0ed06e9202e8cb7db9bae7b8c82"
+          "sha256": "7f78c730aaa7d0b9336a299029ea49f9ee53b0ed06e9202e8cb7db9bae7b8c82",
+          "patches": [
+            "@//:PATCH.link_cplusplus_libcxx"
+          ]
         }
       },
       "targets": [
@@ -3570,7 +3573,8 @@
         ],
         "crate_features": {
           "common": [
-            "default"
+            "default",
+            "libc++"
           ],
           "selects": {}
         },

@@ -1,0 +1,66 @@
+--- a/tflite/delegates/xnnpack/xnnpack_delegate.cc	2026-04-20 13:34:08.597347151 -0700
++++ b/tflite/delegates/xnnpack/xnnpack_delegate.cc	2026-04-20 13:34:46.481523337 -0700
+@@ -74,6 +74,14 @@
+ namespace xnnpack {
+ namespace {
+ 
++// Older XNNPACK headers used by LiteRT-LM's current TensorFlow baseline do
++// not declare xnn_datatype_qint4, while newer LiteRT revisions reference it.
++// Use the upstream enum value directly to keep the delegate code buildable
++// across both baselines. On older XNNPACK this path remains effectively
++// unsupported at runtime unless the backend also understands the value.
++constexpr xnn_datatype kXnnDatatypeQint4Compat =
++    static_cast<xnn_datatype>(19);
++
+ // VisitDotAttentionNode uses a clamp to add a constant value to the XNNPack
+ // subgraph. The constant data must outlive the XNNPack delegate and there is no
+ // simple way of doing this. Therefore a clamp was used to clamp some arbitrary
+@@ -309,7 +317,7 @@
+                       context, tensor, t, -8, 7, *quantization_zero_point)) {
+                 return xnn_datatype_invalid;
+               }
+-              return xnn_datatype_qint4;
++              return kXnnDatatypeQint4Compat;
+             }
+           }
+           if (NumDimensions(&tensor) >= 1 &&
+@@ -531,8 +539,20 @@
+                            &tensor.dims->data[NumDimensions(&tensor)]);
+ 
+   xnn_status status = xnn_status_success;
+-  switch (datatype) {
+-    case xnn_datatype_qint4:
++  if (datatype == kXnnDatatypeQint4Compat) {
++    const TfLiteAffineQuantization* quantization_params =
++        static_cast<const TfLiteAffineQuantization*>(
++            tensor.quantization.params);
++    int32_t zero_point = quantization_params->zero_point->data[0];
++    status = xnn_define_quantized_tensor_value(
++        subgraph, datatype, zero_point,
++        static_cast<const TfLiteAffineQuantization*>(
++            tensor.quantization.params)
++            ->scale->data[0],
++        dims.size(), dims.data(), data, XNN_INVALID_VALUE_ID, flags,
++        xnnpack_id);
++  } else {
++    switch (datatype) {
+     case xnn_datatype_qint8:
+     case xnn_datatype_quint8:
+     case xnn_datatype_qint32: {
+@@ -597,6 +617,7 @@
+                                        dims.data(), data, XNN_INVALID_VALUE_ID,
+                                        flags, xnnpack_id);
+       break;
++    }
+   }
+   return kTfLiteOk;
+ }
+@@ -4727,7 +4748,7 @@
+         xnn_datatype filter_datatype = GetXNNPackDatatype(
+             logging_context, filter_tensor, filter_tensor_id);
+         if (filter_datatype == xnn_datatype_qint8 ||
+-            filter_datatype == xnn_datatype_qint4) {
++            filter_datatype == kXnnDatatypeQint4Compat) {
+           filter_datatype = filter_datatype == xnn_datatype_qint8
+                                 ? xnn_datatype_qcint8
+                                 : xnn_datatype_qcint4;

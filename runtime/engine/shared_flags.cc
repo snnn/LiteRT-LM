@@ -73,6 +73,8 @@ ABSL_FLAG(bool, multi_turns, false,
 ABSL_FLAG(int, num_cpu_threads, 0,
           "If greater than 0, the number of CPU threads to use for the LLM "
           "execution with CPU backend.");
+ABSL_FLAG(std::string, cache_dir, "",
+          "Directory for caching compiled model artifacts.");
 ABSL_FLAG(bool, gpu_external_tensor_mode, false,
           "If false (by default), the GPU backend will use no external tensor "
           "mode which runs slightly faster during decode. It should be set "
@@ -144,3 +146,10 @@ ABSL_FLAG(bool, use_submodel, false,
           "Whether the submodel should be used if available.");
 ABSL_FLAG(bool, enable_speculative_decoding, false,
           "Whether to use speculative decoding.");
+ABSL_FLAG(std::string, dump_first_decode_tensors_dir, "",
+          "If not empty, dump the first real decode-step input/output tensors "
+          "under this directory for standalone replay/debugging.");
+ABSL_FLAG(std::string, dump_first_decode_profile_path, "",
+          "If not empty, dump the first real decode-step LiteRT profile "
+          "summary to this file path and raw profiler events to "
+          "\"<path>.events.tsv\".");

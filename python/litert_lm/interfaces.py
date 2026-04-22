@@ -31,6 +31,31 @@ class Backend(enum.Enum):
   GPU = 4
 
 
+@dataclasses.dataclass(kw_only=True)
+class SessionOptions:
+  """Session-level defaults for LiteRT-LM generation.
+
+  These values configure the sampler/session state at session creation time.
+  Per-request overrides should go through `GenerateConfig`.
+  """
+
+  apply_prompt_template: bool | None = None
+  do_sample: bool | None = None
+  temperature: float | None = None
+  top_p: float | None = None
+  top_k: int | None = None
+  stop_token_ids: list[list[int]] | None = None
+  num_output_candidates: int | None = None
+  max_output_tokens: int | None = None
+
+
+@dataclasses.dataclass(kw_only=True)
+class GenerateConfig:
+  """Per-request decode configuration for LiteRT-LM generation."""
+
+  max_output_tokens: int | None = None
+
+
 class ToolEventHandler(abc.ABC):
   """Handler for tool call and tool response events."""
 
@@ -60,19 +85,6 @@ class ToolEventHandler(abc.ABC):
     Returns:
         The tool response that will be sent to the model.
     """
-
-@dataclasses.dataclass
-class SessionOptions:
-  """Options applied when a new low-level session is created."""
-
-  apply_prompt_template_in_session: bool | None = None
-
-
-@dataclasses.dataclass
-class DecodeOptions:
-  """Options applied to a single decode request."""
-
-  max_output_tokens: int | None = None
 
 
 class Tool(abc.ABC):
@@ -104,6 +116,10 @@ class AbstractEngine(abc.ABC):
       max_num_tokens: Maximum number of tokens for the KV cache. If None, use
         the engine/model's default.
       cache_dir: Directory for caching compiled model artifacts.
+      num_cpu_threads: Number of CPU threads for the main executor. Ignored for
+        non-CPU backends when left at 0.
+      prefill_chunk_size: Maximum dynamic prefill chunk size. A value of -1
+        leaves the runtime default unchanged.
       vision_backend: The hardware backend used for vision encoding.
       audio_backend: The hardware backend used for audio encoding.
       enable_speculative_decoding: Whether to enable speculative decoding. If
@@ -118,6 +134,8 @@ class AbstractEngine(abc.ABC):
   backend: Backend
   max_num_tokens: int | None = None
   cache_dir: str = ""
+  num_cpu_threads: int = 0
+  prefill_chunk_size: int = -1
   vision_backend: Backend | None = None
   audio_backend: Backend | None = None
   enable_speculative_decoding: bool | None = None
@@ -164,16 +182,38 @@ class AbstractEngine(abc.ABC):
 
   @abc.abstractmethod
   def create_session(
-      self, options: SessionOptions | None = None
+      self,
+      config: SessionOptions | None = None,
+      *,
+      apply_prompt_template: bool = True,
   ) -> AbstractSession:
     """Creates a new session for this engine.
 
     Args:
-        options: Session options to apply when creating the low-level session.
+        config: Optional structured session configuration. When provided, it
+          can override `apply_prompt_template` and other session defaults.
+        apply_prompt_template: Whether to apply the basic prompt templates in
+          the session.
 
     Returns:
         A new session instance for low-level interaction with the model.
     """
+
+  @abc.abstractmethod
+  def render_prompt(
+      self,
+      messages: collections.abc.Sequence[collections.abc.Mapping[str, Any]],
+      *,
+      tools: collections.abc.Sequence[collections.abc.Mapping[str, Any]] | None = None,
+      extra_context: collections.abc.Mapping[str, Any] | None = None,
+      add_generation_prompt: bool = True,
+      continue_final_message: bool = False,
+  ) -> str:
+    """Renders a model-native prompt from structured messages."""
+
+  @abc.abstractmethod
+  def parse_response(self, text: str) -> collections.abc.Mapping[str, Any]:
+    """Parses raw generated text into a model-native assistant message."""
 
   @property
   @abc.abstractmethod
@@ -387,7 +427,11 @@ class AbstractSession(abc.ABC):
     """
 
   @abc.abstractmethod
-  def run_decode(self, options: DecodeOptions | None = None) -> Responses:
+  def run_prefill_token_ids(self, token_ids: list[int]) -> None:
+    """Runs the prefill stage using already-tokenized ids."""
+
+  @abc.abstractmethod
+  def run_decode(self, config: GenerateConfig | None = None) -> Responses:
     """Runs the decode stage of the session.
 
     Returns:
@@ -396,7 +440,9 @@ class AbstractSession(abc.ABC):
     """
 
   @abc.abstractmethod
-  def run_decode_async(self) -> collections.abc.Iterator[Responses]:
+  def run_decode_async(
+      self, config: GenerateConfig | None = None
+  ) -> collections.abc.Iterator[Responses]:
     """Runs the decode stage of the session asynchronously.
 
     Returns:
@@ -419,6 +465,12 @@ class AbstractSession(abc.ABC):
         Responses: The log likelihood scores of the target text given the
         existing session state.
     """
+
+  @abc.abstractmethod
+  def run_token_scoring(
+      self, target_token_ids: list[list[int]], store_token_lengths: bool = False
+  ) -> Responses:
+    """Runs the scoring stage using already-tokenized target ids."""
 
   @abc.abstractmethod
   def cancel_process(self) -> None:

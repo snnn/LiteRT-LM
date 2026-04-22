@@ -134,6 +134,26 @@ build --repo_env=HERMETIC_PYTHON_VERSION=3.13
 build:linux --action_env=CC=gcc
 build:linux --action_env=CXX=g++
 
+# Linux builds that must share C++ objects with LiteRT GPU delegates should use
+# libc++ explicitly so the host binaries, Python extension, and runtime DSOs
+# stay on the same STL ABI.
+build:linux_libcxx --config=linux
+build:linux_libcxx --define=litert_link_capi_so=true
+build:linux_libcxx --define=litert_runtime_link_mode=dynamic
+build:linux_libcxx --define=resolve_symbols_in_exec=false
+build:linux_libcxx --@rules_ml_toolchain//common:enable_hermetic_cc=False
+build:linux_libcxx --repo_env USE_HERMETIC_CC_TOOLCHAIN=0
+build:linux_libcxx --crosstool_top=@local_config_cuda//crosstool:toolchain
+build:linux_libcxx --host_crosstool_top=@local_config_cuda//crosstool:toolchain
+build:linux_libcxx --action_env=CC=clang
+build:linux_libcxx --action_env=CXX=clang++
+build:linux_libcxx --cxxopt=-stdlib=libc++
+build:linux_libcxx --host_cxxopt=-stdlib=libc++
+build:linux_libcxx --linkopt=-stdlib=libc++
+build:linux_libcxx --host_linkopt=-stdlib=libc++
+build:linux_libcxx --linkopt=-lc++abi
+build:linux_libcxx --host_linkopt=-lc++abi
+
 # Android configs. Bazel needs to have --cpu and --fat_apk_cpu both set to the
 # target CPU to build transient dependencies correctly. See
 # https://docs.bazel.build/versions/master/user-manual.html#flag--fat_apk_cpu
@@ -548,7 +568,6 @@ build:macos --host_cxxopt="-fno-modules"
 # Windows Configuration (MSVC)
 # We leave this blank or add MSVC-specific flags if needed later.
 # MSVC doesn't typically enable strict layering checks by default anyway.
-
 # TODO : b/501457260 Investigate supporting C++20 by upgrading to glibc 2.35 sysroot in future.
 # Hermetic Linux x86_64 build targeting glibc 2.31 (used by Kokoro)
 build:hermetic_linux --@rules_ml_toolchain//common:enable_hermetic_cc=True

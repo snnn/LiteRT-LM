@@ -166,6 +166,43 @@ TEST_F(SessionUtilsTest, StringToProcessedInputText) {
               testing::ElementsAre(2, 90, 547, 58, 735, 210, 466, 2294));
 }
 
+TEST_F(SessionUtilsTest, StringToProcessedInputTextBenchmarkShortPromptFails) {
+  SessionConfig session_config = SessionConfig::CreateDefault();
+  session_config.SetStartTokenId(2);  // Corresponds to "</s>"
+  proto::BenchmarkParams benchmark_params;
+  benchmark_params.set_num_prefill_tokens(16);
+  std::optional<BenchmarkInfo> benchmark_info(BenchmarkInfo(benchmark_params));
+
+  EXPECT_THAT(
+      StringToProcessedInputText("</s>Hello World!", session_config,
+                                 *tokenizer_, benchmark_info),
+      testing::status::StatusIs(
+          absl::StatusCode::kInvalidArgument,
+          testing::HasSubstr(
+              "Benchmark prompt token count (8) is smaller than "
+              "benchmark_prefill_tokens (16)")));
+}
+
+TEST_F(SessionUtilsTest, StringToProcessedInputTextBenchmarkLongPromptTruncates) {
+  SessionConfig session_config = SessionConfig::CreateDefault();
+  session_config.SetStartTokenId(2);  // Corresponds to "</s>"
+  proto::BenchmarkParams benchmark_params;
+  benchmark_params.set_num_prefill_tokens(4);
+  std::optional<BenchmarkInfo> benchmark_info(BenchmarkInfo(benchmark_params));
+
+  ASSERT_OK_AND_ASSIGN(auto input_text, StringToProcessedInputText(
+                                            "</s>Hello World!", session_config,
+                                            *tokenizer_, benchmark_info));
+  ASSERT_TRUE(input_text.IsTensorBuffer());
+  ASSERT_OK_AND_ASSIGN(auto text_tensor,
+                       input_text.GetPreprocessedTextTensor());
+  ASSERT_NE(text_tensor, nullptr);
+  LITERT_ASSERT_OK_AND_ASSIGN(auto token_ids_span,
+                              ReferTensorBufferAsSpan<int>(*text_tensor));
+  EXPECT_THAT(std::vector<int>(token_ids_span.begin(), token_ids_span.end()),
+              testing::ElementsAre(2, 90, 547, 58));
+}
+
 TEST_F(SessionUtilsTest, ApplyPromptTemplatesFails) {
   SessionConfig session_config = SessionConfig::CreateDefault();
   session_config.SetStartTokenId(2);  // Corresponds to "</s>"

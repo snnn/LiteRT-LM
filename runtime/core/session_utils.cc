@@ -67,8 +67,19 @@ absl::StatusOr<InputText> StringToProcessedInputText(
 
   ASSIGN_OR_RETURN(std::vector<int> ids, tokenizer.TextToTokenIds(text));
   if (benchmark_prefill_token_count > 0) {
-    // If benchmark is enabled, we will use the benchmark prefill token
-    // count to set the prefill token count.
+    // Benchmark mode expects the caller to provide enough real prompt tokens
+    // to reach the requested prefill length. Silently resizing upward would
+    // append zero token ids, which changes prompt semantics and can corrupt
+    // benchmark results.
+    if (ids.size() < benchmark_prefill_token_count) {
+      return absl::InvalidArgumentError(absl::StrCat(
+          "Benchmark prompt token count (", ids.size(),
+          ") is smaller than benchmark_prefill_tokens (",
+          benchmark_prefill_token_count,
+          "). Provide a longer prompt or lower --benchmark_prefill_tokens."));
+    }
+    // If benchmark is enabled and the prompt is longer than the requested
+    // prefill length, truncate it to the exact benchmark token count.
     ids.resize(benchmark_prefill_token_count);
   } else if (bos_token_found) {
     ids.insert(ids.begin(), session_config.GetStartTokenId());
