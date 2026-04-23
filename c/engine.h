@@ -64,19 +64,19 @@ typedef struct LiteRtLmConversationConfig LiteRtLmConversationConfig;
 
 // Represents the type of sampler.
 typedef enum {
-  kTypeUnspecified = 0,
+  kLiteRtLmSamplerTypeUnspecified = 0,
   // Probabilistically pick among the top k tokens.
-  kTopK = 1,
+  kLiteRtLmSamplerTypeTopK = 1,
   // Probabilistically pick among the tokens such that the sum is greater
   // than or equal to p tokens after first performing top-k sampling.
-  kTopP = 2,
+  kLiteRtLmSamplerTypeTopP = 2,
   // Pick the token with maximum logit (i.e., argmax).
-  kGreedy = 3,
-} Type;
+  kLiteRtLmSamplerTypeGreedy = 3,
+} LiteRtLmSamplerType;
 
 // Parameters for the sampler.
 typedef struct {
-  Type type;
+  LiteRtLmSamplerType type;
   int32_t top_k;
   float top_p;
   float temperature;
@@ -138,23 +138,23 @@ void litert_lm_set_min_log_level(int level);
 
 // Represents the type of input data.
 typedef enum {
-  kInputText,
-  kInputImage,
-  kInputImageEnd,
-  kInputAudio,
-  kInputAudioEnd,
-} InputDataType;
+  kLiteRtLmInputDataTypeText,
+  kLiteRtLmInputDataTypeImage,
+  kLiteRtLmInputDataTypeImageEnd,
+  kLiteRtLmInputDataTypeAudio,
+  kLiteRtLmInputDataTypeAudioEnd,
+} LiteRtLmInputDataType;
 
 // Represents a single piece of input data.
 typedef struct {
-  InputDataType type;
+  LiteRtLmInputDataType type;
   // The data pointer. The interpretation depends on the `type`.
   // For kInputText, it's a UTF-8 string.
   // For kInputImage and kInputAudio, it's a pointer to the raw bytes.
   const void* data;
   // The size of the data in bytes.
   size_t size;
-} InputData;
+} LiteRtLmInputData;
 
 // Creates LiteRT LM Engine Settings. The caller is responsible for destroying
 // the settings using `litert_lm_engine_settings_delete`.
@@ -284,15 +284,16 @@ void litert_lm_session_delete(LiteRtLmSession* session);
 // Generates content from the input prompt.
 //
 // @param session The session to use for generation.
-// @param inputs An array of InputData structs representing the multimodal
+// @param inputs An array of LiteRtLmInputData structs representing the
+// multimodal
 //   input.
-// @param num_inputs The number of InputData structs in the array.
+// @param num_inputs The number of LiteRtLmInputData structs in the array.
 // @return A pointer to the responses, or NULL on failure. The caller is
 //   responsible for deleting the responses using `litert_lm_responses_delete`.
 LITERT_LM_C_API_EXPORT
-LiteRtLmResponses* litert_lm_session_generate_content(LiteRtLmSession* session,
-                                                      const InputData* inputs,
-                                                      size_t num_inputs);
+LiteRtLmResponses* litert_lm_session_generate_content(
+    LiteRtLmSession* session, const LiteRtLmInputData* inputs,
+    size_t num_inputs);
 // Destroys a LiteRT LM Responses object.
 //
 // @param responses The responses to destroy.
@@ -419,16 +420,17 @@ typedef void (*LiteRtLmStreamCallback)(void* callback_data, const char* chunk,
 // background thread for each chunk.
 //
 // @param session The session to use for generation.
-// @param inputs An array of InputData structs representing the multimodal
+// @param inputs An array of LiteRtLmInputData structs representing the
+// multimodal
 //   input.
-// @param num_inputs The number of InputData structs in the array.
+// @param num_inputs The number of LiteRtLmInputData structs in the array.
 // @param callback The callback function to receive response chunks.
 // @param callback_data A pointer to user data that will be passed to the
 // callback.
 // @return 0 on success, non-zero on failure to start the stream.
 LITERT_LM_C_API_EXPORT
 int litert_lm_session_generate_content_stream(LiteRtLmSession* session,
-                                              const InputData* inputs,
+                                              const LiteRtLmInputData* inputs,
                                               size_t num_inputs,
                                               LiteRtLmStreamCallback callback,
                                               void* callback_data);

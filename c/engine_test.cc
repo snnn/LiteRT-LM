@@ -201,7 +201,7 @@ TEST(EngineCTest, SetEnableSpeculativeDecoding) {
 
 TEST(EngineCTest, CreateSessionConfigWithSamplerParams) {
   LiteRtLmSamplerParams sampler_params;
-  sampler_params.type = kTopP;
+  sampler_params.type = kLiteRtLmSamplerTypeTopP;
   sampler_params.top_k = 10;
   sampler_params.top_p = 0.5f;
   sampler_params.temperature = 0.1f;
@@ -249,7 +249,7 @@ TEST(EngineCTest, CreateConversationConfig) {
 
   // 2. Create Sampler Params.
   LiteRtLmSamplerParams sampler_params;
-  sampler_params.type = kTopP;
+  sampler_params.type = kLiteRtLmSamplerTypeTopP;
   sampler_params.top_k = 10;
   sampler_params.top_p = 0.5f;
   sampler_params.temperature = 0.1f;
@@ -547,7 +547,7 @@ TEST(EngineCTest, CreateConversationConfigWithNoSystemMessage) {
 
   // 2. Create Sampler Params.
   LiteRtLmSamplerParams sampler_params;
-  sampler_params.type = kTopP;
+  sampler_params.type = kLiteRtLmSamplerTypeTopP;
   sampler_params.top_k = 10;
   sampler_params.top_p = 0.5f;
   sampler_params.temperature = 0.1f;
@@ -603,8 +603,8 @@ TEST(EngineCTest, GenerateContent) {
   ASSERT_NE(session, nullptr);
 
   const char* prompt = "Hello world!";
-  InputData input_data;
-  input_data.type = kInputText;
+  LiteRtLmInputData input_data;
+  input_data.type = kLiteRtLmInputDataTypeText;
   input_data.data = prompt;
   input_data.size = strlen(prompt);
   ResponsesPtr responses(
@@ -648,8 +648,8 @@ TEST(EngineCTest, CreateSessionWithMaxOutputTokens) {
     ASSERT_NE(session, nullptr);
 
     const char* prompt = "Hello world!";
-    InputData input_data;
-    input_data.type = kInputText;
+    LiteRtLmInputData input_data;
+    input_data.type = kLiteRtLmInputDataTypeText;
     input_data.data = prompt;
     input_data.size = strlen(prompt);
     ResponsesPtr responses(
@@ -677,8 +677,8 @@ TEST(EngineCTest, CreateSessionWithMaxOutputTokens) {
     ASSERT_NE(session, nullptr);
 
     const char* prompt = "Hello world!";
-    InputData input_data;
-    input_data.type = kInputText;
+    LiteRtLmInputData input_data;
+    input_data.type = kLiteRtLmInputDataTypeText;
     input_data.data = prompt;
     input_data.size = strlen(prompt);
     ResponsesPtr responses(
@@ -748,7 +748,7 @@ TEST(EngineCTest, ConversationSendMessageWithConfig) {
 
   // 2. Create Sampler Params.
   LiteRtLmSamplerParams sampler_params;
-  sampler_params.type = kTopP;
+  sampler_params.type = kLiteRtLmSamplerTypeTopP;
   sampler_params.top_k = 10;
   sampler_params.top_p = 0.5f;
   sampler_params.temperature = 0.1f;
@@ -880,8 +880,8 @@ TEST(EngineCTest, GenerateContentStream) {
   ASSERT_NE(session, nullptr);
 
   const char* prompt = "Hello world!";
-  InputData input_data;
-  input_data.type = kInputText;
+  LiteRtLmInputData input_data;
+  input_data.type = kLiteRtLmInputDataTypeText;
   input_data.data = prompt;
   input_data.size = strlen(prompt);
   StreamCallbackData callback_data;
@@ -1037,8 +1037,8 @@ TEST(EngineCTest, Benchmark) {
   ASSERT_NE(session, nullptr);
 
   const char* prompt = "Hello world!";
-  InputData input_data;
-  input_data.type = kInputText;
+  LiteRtLmInputData input_data;
+  input_data.type = kLiteRtLmInputDataTypeText;
   input_data.data = prompt;
   input_data.size = strlen(prompt);
   ResponsesPtr responses(
