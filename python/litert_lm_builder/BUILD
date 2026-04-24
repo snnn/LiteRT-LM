@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@org_tensorflow//tensorflow:pytype.default.bzl", "pytype_strict_binary", "pytype_strict_library", py_test = "pytype_strict_contrib_test")
+load("@org_tensorflow//tensorflow:pytype.default.bzl", "pytype_strict_binary", "pytype_strict_library")
 load("@rules_python//python:defs.bzl", "py_test")
 
 package(
@@ -35,7 +35,7 @@ pytype_strict_library(
 
 py_test(
     name = "litertlm_core_test",
-    srcs = ["litertlm_core_test.py"],
+    srcs = ["litertlm_core_test.py"], imports = [".."],
     deps = [
         ":litertlm_core",
         "//schema/core:litertlm_header_schema_py",
@@ -70,7 +70,7 @@ pytype_strict_binary(
 
 py_test(
     name = "litertlm_peek_test",
-    srcs = ["litertlm_peek_test.py"],
+    srcs = ["litertlm_peek_test.py"], imports = [".."],
     data = ["//schema:testdata"],
     main = "litertlm_peek_test.py",
     deps = [
@@ -95,7 +95,7 @@ pytype_strict_library(
 
 py_test(
     name = "litertlm_builder_test",
-    srcs = ["litertlm_builder_test.py"],
+    srcs = ["litertlm_builder_test.py"], imports = [".."],
     deps = [
         ":litertlm_builder",
         ":litertlm_core",
@@ -109,7 +109,7 @@ py_test(
 
 pytype_strict_binary(
     name = "litertlm_builder_cli",
-    srcs = ["litertlm_builder_cli.py"],
+    srcs = ["litertlm_builder_cli.py"], imports = [".."],
     tags = [
         "manual",
         "notap",
@@ -123,7 +123,7 @@ pytype_strict_binary(
 
 py_test(
     name = "litertlm_builder_cli_test",
-    srcs = ["litertlm_builder_cli_test.py"],
+    srcs = ["litertlm_builder_cli_test.py"], imports = [".."],
     data = [
         ":litertlm_builder_cli",
     ],
