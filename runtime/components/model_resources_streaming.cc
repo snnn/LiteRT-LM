@@ -57,6 +57,13 @@ ModelResourcesStreaming::GetTFLiteModelBackendConstraint(ModelType model_type) {
   return std::nullopt;
 }
 
+std::optional<std::string> ModelResourcesStreaming::GetTFLiteModelMetadataValue(
+    ModelType model_type, absl::string_view key) {
+  (void)model_type;
+  (void)key;
+  return std::nullopt;
+}
+
 absl::StatusOr<std::unique_ptr<Tokenizer>>
 ModelResourcesStreaming::GetTokenizer() {
   return absl::UnimplementedError("Not implemented.");

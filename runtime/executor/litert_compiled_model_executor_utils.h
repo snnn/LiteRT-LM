@@ -74,6 +74,25 @@ struct ModelSignatures {
   std::string output_logits;
 };
 
+struct CacheAdapterMetadata {
+  std::string cache_adapter_kind;
+  std::vector<std::string> cache_layer_types;
+
+  bool has_adapter() const { return !cache_adapter_kind.empty(); }
+};
+
+absl::StatusOr<CacheAdapterMetadata> ParseCacheAdapterMetadata(
+    std::optional<std::string> cache_adapter_kind,
+    std::optional<std::string> cache_layer_types);
+
+absl::StatusOr<CacheAdapterMetadata> GetCacheAdapterMetadata(
+    ModelResources& resources,
+    ModelType model_type = ModelType::kTfLitePrefillDecode);
+
+absl::StatusOr<bool> IsSequenceCacheTensorName(
+    absl::string_view tensor_name, absl::string_view k_root_name,
+    absl::string_view v_root_name, const CacheAdapterMetadata& metadata);
+
 // Get the corresponding ModelSignatures struct for the given model using
 // the signature runner. Returns an error if the runner's signature does not
 // match any of the predefined signature set.

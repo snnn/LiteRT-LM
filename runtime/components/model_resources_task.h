@@ -51,6 +51,12 @@ class ModelResourcesTask : public ModelResources {
     // Task model does not support backend constraint.
     return std::nullopt;
   };
+  std::optional<std::string> GetTFLiteModelMetadataValue(
+      ModelType model_type, absl::string_view key) override {
+    (void)model_type;
+    (void)key;
+    return std::nullopt;
+  }
   absl::StatusOr<std::unique_ptr<Tokenizer>> GetTokenizer() override;
   absl::StatusOr<const proto::LlmMetadata*> GetLlmMetadata() override;
   absl::StatusOr<std::reference_wrapper<ScopedFile>> GetScopedFile() override {

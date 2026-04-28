@@ -16,7 +16,9 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "absl/algorithm/container.h"  // from @com_google_absl
 #include "absl/status/status.h"  // from @com_google_absl
@@ -60,7 +62,8 @@ absl::StatusOr<bool> IsDynamicTensor(const SimpleTensor& tensor) {
 // Returns true if the model is a dynamic model.
 // Model dynamism is determined based on the prefill signature and whether the
 // KV cache and sequence length are dynamic.
-absl::StatusOr<bool> IsDynamicModel(const Model& model) {
+absl::StatusOr<bool> IsDynamicModel(
+    const Model& model, const CacheAdapterMetadata& cache_metadata) {
   absl::string_view prefill_signature_key;
   for (int i = 0; i < model.GetNumSignatures(); ++i) {
     LITERT_ASSIGN_OR_RETURN(auto sig, model.GetSignature(i));
@@ -93,21 +96,66 @@ absl::StatusOr<bool> IsDynamicModel(const Model& model) {
       return false;
     }
 
-    std::string first_kv_cache_k_input_name = kv_cache_k_root_name + "0";
-    LITERT_ASSIGN_OR_RETURN(
-        SimpleTensor k_tensor,
-        prefill_signature.InputTensor(first_kv_cache_k_input_name));
-    ASSIGN_OR_RETURN(bool is_k_dynamic, IsDynamicTensor(k_tensor));
+    std::vector<std::string> sequence_key_cache_input_names;
+    std::vector<std::string> sequence_value_cache_input_names;
+    for (auto input_name : prefill_signature.InputNames()) {
+      const bool is_key_cache_input =
+          absl::StartsWith(input_name, kv_cache_k_root_name);
+      const bool is_value_cache_input =
+          absl::StartsWith(input_name, kv_cache_v_root_name);
+      if (!is_key_cache_input && !is_value_cache_input) {
+        continue;
+      }
+      ASSIGN_OR_RETURN(
+          bool is_sequence_cache_tensor,
+          IsSequenceCacheTensorName(input_name, kv_cache_k_root_name,
+                                    kv_cache_v_root_name, cache_metadata));
+      if (!is_sequence_cache_tensor) {
+        continue;
+      }
+      if (is_key_cache_input) {
+        sequence_key_cache_input_names.emplace_back(input_name);
+      }
+      if (is_value_cache_input) {
+        sequence_value_cache_input_names.emplace_back(input_name);
+      }
+    }
+    if (sequence_key_cache_input_names.empty() ||
+        sequence_value_cache_input_names.empty()) {
+      return false;
+    }
+    RET_CHECK_EQ(sequence_key_cache_input_names.size(),
+                 sequence_value_cache_input_names.size())
+        << "Sequence KV cache input counts do not match.";
+    std::sort(sequence_key_cache_input_names.begin(),
+              sequence_key_cache_input_names.end());
+    std::sort(sequence_value_cache_input_names.begin(),
+              sequence_value_cache_input_names.end());
 
-    std::string first_kv_cache_v_input_name = kv_cache_v_root_name + "0";
-    LITERT_ASSIGN_OR_RETURN(
-        SimpleTensor v_tensor,
-        prefill_signature.InputTensor(first_kv_cache_v_input_name));
-    ASSIGN_OR_RETURN(bool is_v_dynamic, IsDynamicTensor(v_tensor));
-
-    RET_CHECK(is_k_dynamic == is_v_dynamic)
-        << "KV cache k and v need to be dynamic or static at the same time.";
-    is_kv_cache_dynamic = is_k_dynamic && is_v_dynamic;
+    std::optional<bool> reference_is_dynamic;
+    for (const auto& k_input_name : sequence_key_cache_input_names) {
+      const std::string layer_suffix =
+          k_input_name.substr(kv_cache_k_root_name.size());
+      const std::string v_input_name = kv_cache_v_root_name + layer_suffix;
+      RET_CHECK(
+          absl::c_linear_search(sequence_value_cache_input_names, v_input_name))
+          << "Missing value cache input for " << k_input_name;
+      LITERT_ASSIGN_OR_RETURN(SimpleTensor k_tensor,
+                              prefill_signature.InputTensor(k_input_name));
+      ASSIGN_OR_RETURN(bool is_k_dynamic, IsDynamicTensor(k_tensor));
+      LITERT_ASSIGN_OR_RETURN(SimpleTensor v_tensor,
+                              prefill_signature.InputTensor(v_input_name));
+      ASSIGN_OR_RETURN(bool is_v_dynamic, IsDynamicTensor(v_tensor));
+      RET_CHECK(is_k_dynamic == is_v_dynamic)
+          << "KV cache k and v need to be dynamic or static at the same time.";
+      if (!reference_is_dynamic.has_value()) {
+        reference_is_dynamic = is_k_dynamic;
+      } else {
+        RET_CHECK_EQ(*reference_is_dynamic, is_k_dynamic)
+            << "All sequence KV cache tensors must agree on dynamism.";
+      }
+    }
+    is_kv_cache_dynamic = reference_is_dynamic.value_or(false);
   }
 
   bool is_seq_len_dynamic = false;
@@ -133,9 +181,13 @@ CreateCpuOrGpuLlmLiteRtCompiledModelExecutor(
     ModelResources& resources) {
   ASSIGN_OR_RETURN(const litert::Model* litert_model,
                    resources.GetTFLiteModel(ModelType::kTfLitePrefillDecode));
+  ASSIGN_OR_RETURN(
+      CacheAdapterMetadata cache_metadata,
+      GetCacheAdapterMetadata(resources, ModelType::kTfLitePrefillDecode));
 
   std::unique_ptr<LlmExecutor> executor;
-  ASSIGN_OR_RETURN(bool is_dynamic_model, IsDynamicModel(*litert_model));
+  ASSIGN_OR_RETURN(bool is_dynamic_model,
+                   IsDynamicModel(*litert_model, cache_metadata));
   if (is_dynamic_model) {
     ASSIGN_OR_RETURN(executor, LlmLiteRtCompiledModelExecutorDynamic::Create(
                                    executor_settings, lrt_env, resources));

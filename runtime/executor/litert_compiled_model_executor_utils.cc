@@ -22,6 +22,7 @@
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -31,8 +32,12 @@
 #include "absl/log/absl_log.h"  // from @com_google_absl
 #include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/statusor.h"  // from @com_google_absl
+#include "absl/strings/ascii.h"  // from @com_google_absl
 #include "absl/strings/match.h"  // from @com_google_absl
+#include "absl/strings/numbers.h"  // from @com_google_absl
+#include "absl/strings/str_split.h"  // from @com_google_absl
 #include "absl/strings/string_view.h"  // from @com_google_absl
+#include "absl/strings/strip.h"  // from @com_google_absl
 #include "absl/types/span.h"  // from @com_google_absl
 #include "litert/cc/litert_element_type.h"  // from @litert
 #include "litert/cc/litert_expected.h"  // from @litert
@@ -122,7 +127,89 @@ BuildModelResourcesFromLitertLmFormat(const ModelAssets& model_assets) {
   return ModelResourcesLitertLm::Create(std::move(loader));
 }
 
+absl::StatusOr<int> GetCacheTensorLayerIndex(absl::string_view tensor_name,
+                                             absl::string_view root_name) {
+  if (!absl::StartsWith(tensor_name, root_name)) {
+    return absl::InvalidArgumentError("Tensor name does not match cache root.");
+  }
+  const absl::string_view suffix = tensor_name.substr(root_name.size());
+  int layer_index = 0;
+  if (!absl::SimpleAtoi(suffix, &layer_index) || layer_index < 0) {
+    return absl::InvalidArgumentError(
+        "Failed to parse cache tensor layer index.");
+  }
+  return layer_index;
+}
+
 }  // namespace
+
+absl::StatusOr<CacheAdapterMetadata> ParseCacheAdapterMetadata(
+    std::optional<std::string> cache_adapter_kind,
+    std::optional<std::string> cache_layer_types) {
+  CacheAdapterMetadata metadata;
+  if (!cache_adapter_kind.has_value() || cache_adapter_kind->empty()) {
+    return metadata;
+  }
+  metadata.cache_adapter_kind =
+      absl::AsciiStrToLower(absl::StripAsciiWhitespace(*cache_adapter_kind));
+  if (metadata.cache_adapter_kind.empty()) {
+    return metadata;
+  }
+  if (metadata.cache_adapter_kind == "qwen35") {
+    RET_CHECK(cache_layer_types.has_value() && !cache_layer_types->empty())
+            .SetCode(absl::StatusCode::kFailedPrecondition)
+        << "cache_layer_types metadata is required for qwen35 cache adapter.";
+    for (absl::string_view part : absl::StrSplit(*cache_layer_types, ',')) {
+      const std::string layer_type =
+          std::string(absl::AsciiStrToLower(absl::StripAsciiWhitespace(part)));
+      if (!layer_type.empty()) {
+        metadata.cache_layer_types.push_back(layer_type);
+      }
+    }
+    RET_CHECK(!metadata.cache_layer_types.empty())
+            .SetCode(absl::StatusCode::kFailedPrecondition)
+        << "cache_layer_types metadata is empty for qwen35 cache adapter.";
+  }
+  return metadata;
+}
+
+absl::StatusOr<CacheAdapterMetadata> GetCacheAdapterMetadata(
+    ModelResources& resources, ModelType model_type) {
+  return ParseCacheAdapterMetadata(
+      resources.GetTFLiteModelMetadataValue(model_type, "cache_adapter_kind"),
+      resources.GetTFLiteModelMetadataValue(model_type, "cache_layer_types"));
+}
+
+absl::StatusOr<bool> IsSequenceCacheTensorName(
+    absl::string_view tensor_name, absl::string_view k_root_name,
+    absl::string_view v_root_name, const CacheAdapterMetadata& metadata) {
+  if (!metadata.has_adapter()) {
+    return true;
+  }
+  if (metadata.cache_adapter_kind != "qwen35") {
+    return true;
+  }
+  const bool is_key_tensor = absl::StartsWith(tensor_name, k_root_name);
+  const bool is_value_tensor = absl::StartsWith(tensor_name, v_root_name);
+  RET_CHECK(is_key_tensor || is_value_tensor)
+          .SetCode(absl::StatusCode::kInvalidArgument)
+      << "Tensor name is not a recognized KV cache tensor: " << tensor_name;
+  const absl::string_view root_name = is_key_tensor ? k_root_name : v_root_name;
+  ASSIGN_OR_RETURN(int layer_index,
+                   GetCacheTensorLayerIndex(tensor_name, root_name));
+  RET_CHECK_LT(layer_index, metadata.cache_layer_types.size())
+          .SetCode(absl::StatusCode::kFailedPrecondition)
+      << "Cache metadata layer_types does not cover tensor: " << tensor_name;
+  const absl::string_view layer_type = metadata.cache_layer_types[layer_index];
+  if (layer_type == "full_attention") {
+    return true;
+  }
+  if (layer_type == "linear_attention") {
+    return false;
+  }
+  return absl::FailedPreconditionError(
+      "Unsupported qwen35 cache layer type in metadata.");
+}
 
 absl::StatusOr<ModelSignatures> GetModelSignaturesFromInputOutputNames(
     const std::vector<absl::string_view>& input_names,

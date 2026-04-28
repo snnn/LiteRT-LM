@@ -54,6 +54,9 @@ class ModelResourcesStreaming : public ModelResources {
   std::optional<std::string> GetTFLiteModelBackendConstraint(
       ModelType model_type) override;
 
+  std::optional<std::string> GetTFLiteModelMetadataValue(
+      ModelType model_type, absl::string_view key) override;
+
   absl::StatusOr<std::unique_ptr<Tokenizer>> GetTokenizer() override;
 
   absl::StatusOr<const proto::LlmMetadata*> GetLlmMetadata() override;

@@ -70,6 +70,25 @@ TEST(LitertLmStreamingLoaderTest, LoadTestModel) {
   EXPECT_GE(num_sections, 3);
 }
 
+TEST(LitertLmStreamingLoaderTest, ExposesTfliteSectionMetadata) {
+  ASSERT_OK_AND_ASSIGN(auto stream, FileDataStream::Create(GetTestModelPath()));
+
+  LitertLmStreamingLoader loader(std::move(stream));
+
+  while (true) {
+    ASSERT_OK_AND_ASSIGN(auto section_opt, loader.GetNextSection());
+    ASSERT_TRUE(section_opt.has_value());
+    if (section_opt->section->data_type() !=
+        schema::AnySectionDataType_TFLiteModel) {
+      continue;
+    }
+    EXPECT_THAT(section_opt->metadata,
+                testing::Contains(
+                    testing::Pair("model_type", "tf_lite_prefill_decode")));
+    return;
+  }
+}
+
 class MockDataStream : public DataStream {
  public:
   MOCK_METHOD(absl::Status, ReadAndDiscard,
