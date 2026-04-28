@@ -17,6 +17,7 @@
 #include <filesystem>  // NOLINT: Required for path manipulation.
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -189,6 +190,70 @@ TEST(LlmLiteRTCompiledModelExecutorUtilsTest, GetKVCacheRootNames_KvCacheC) {
       GetKVCacheRootNames(input_names, output_names, k_root_name, v_root_name));
   EXPECT_EQ(k_root_name, "kv_cache_c_");
   EXPECT_EQ(v_root_name, "kv_cache_c_");
+}
+
+TEST(LlmLiteRTCompiledModelExecutorUtilsTest,
+     ParseCacheAdapterMetadata_Qwen35) {
+  ASSERT_OK_AND_ASSIGN(
+      auto metadata,
+      ParseCacheAdapterMetadata(
+          std::make_optional<std::string>("qwen35"),
+          std::make_optional<std::string>(
+              "linear_attention, linear_attention, full_attention")));
+  EXPECT_EQ(metadata.cache_adapter_kind, "qwen35");
+  EXPECT_THAT(metadata.cache_layer_types,
+              ElementsAre("linear_attention", "linear_attention",
+                          "full_attention"));
+}
+
+TEST(LlmLiteRTCompiledModelExecutorUtilsTest,
+     IsSequenceCacheTensorName_DefaultsToSequenceCache) {
+  CacheAdapterMetadata metadata;
+  ASSERT_OK_AND_ASSIGN(
+      bool is_sequence,
+      IsSequenceCacheTensorName("kv_cache_k_0", "kv_cache_k_", "kv_cache_v_",
+                                metadata));
+  EXPECT_TRUE(is_sequence);
+}
+
+TEST(LlmLiteRTCompiledModelExecutorUtilsTest,
+     IsSequenceCacheTensorName_Qwen35LinearAttention) {
+  ASSERT_OK_AND_ASSIGN(
+      auto metadata,
+      ParseCacheAdapterMetadata(
+          std::make_optional<std::string>("qwen35"),
+          std::make_optional<std::string>(
+              "linear_attention,linear_attention,full_attention")));
+  ASSERT_OK_AND_ASSIGN(
+      bool key_is_sequence,
+      IsSequenceCacheTensorName("kv_cache_k_1", "kv_cache_k_", "kv_cache_v_",
+                                metadata));
+  ASSERT_OK_AND_ASSIGN(
+      bool value_is_sequence,
+      IsSequenceCacheTensorName("kv_cache_v_1", "kv_cache_k_", "kv_cache_v_",
+                                metadata));
+  EXPECT_FALSE(key_is_sequence);
+  EXPECT_FALSE(value_is_sequence);
+}
+
+TEST(LlmLiteRTCompiledModelExecutorUtilsTest,
+     IsSequenceCacheTensorName_Qwen35FullAttention) {
+  ASSERT_OK_AND_ASSIGN(
+      auto metadata,
+      ParseCacheAdapterMetadata(
+          std::make_optional<std::string>("qwen35"),
+          std::make_optional<std::string>(
+              "linear_attention,linear_attention,full_attention")));
+  ASSERT_OK_AND_ASSIGN(
+      bool key_is_sequence,
+      IsSequenceCacheTensorName("kv_cache_k_2", "kv_cache_k_", "kv_cache_v_",
+                                metadata));
+  ASSERT_OK_AND_ASSIGN(
+      bool value_is_sequence,
+      IsSequenceCacheTensorName("kv_cache_v_2", "kv_cache_k_", "kv_cache_v_",
+                                metadata));
+  EXPECT_TRUE(key_is_sequence);
+  EXPECT_TRUE(value_is_sequence);
 }
 
 TEST(LlmLiteRTCompiledModelExecutorUtilsTest,
@@ -404,6 +469,21 @@ TEST(LlmLiteRTCompiledModelExecutorUtilsTest, FillAttentionMask_Float32) {
       EXPECT_EQ(mask_ptr[i], init_val) << " at index " << i;
     }
   }
+}
+
+TEST(LlmLiteRTCompiledModelExecutorUtilsTest,
+     FillAttentionMask_RejectsOutOfBoundsWrite) {
+  LITERT_ASSERT_OK_AND_ASSIGN(auto env, ::litert::Environment::Create({}));
+  auto layout = ::litert::Layout(::litert::Dimensions({1, 1, 1, 64}));
+  RankedTensorType ranked_tensor_type(ElementType::Float32, std::move(layout));
+  auto mask_buffer =
+      TensorBuffer::CreateManaged(env, ::litert::TensorBufferType::kHostMemory,
+                                  ranked_tensor_type, sizeof(float) * 64);
+  ASSERT_TRUE(mask_buffer);
+
+  ASSERT_OK(InitializeAttentionMask(*mask_buffer, /*is_f16=*/false));
+  EXPECT_THAT(FillAttentionMask(*mask_buffer, /*start_timestep=*/64, /*steps=*/1),
+              StatusIs(absl::StatusCode::kOutOfRange));
 }
 
 TEST(LlmLiteRTCompiledModelExecutorUtilsTest,

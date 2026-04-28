@@ -22,6 +22,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -29,6 +30,7 @@
 #include "absl/log/absl_log.h"  // from @com_google_absl
 #include "absl/status/status.h"  // from @com_google_absl
 #include "absl/status/statusor.h"  // from @com_google_absl
+#include "absl/strings/string_view.h"  // from @com_google_absl
 #include "absl/synchronization/mutex.h"  // from @com_google_absl
 #include "litert/cc/litert_buffer_ref.h"  // from @litert
 #include "runtime/components/model_resources.h"
@@ -70,9 +72,17 @@ struct BufferKey {
   }
 };
 
-// Extracts the BufferKey and backend constraint from the section metadata.
-absl::StatusOr<std::pair<BufferKey, std::optional<std::string>>>
-ExtractBufferKeyAndBackendConstraint(const schema::SectionObject* section);
+using SectionMetadata = std::unordered_map<std::string, std::string>;
+
+struct SectionKeyAndMetadata {
+  BufferKey buffer_key;
+  std::optional<std::string> backend_constraint;
+  SectionMetadata metadata;
+};
+
+// Extracts the BufferKey and string metadata from the section metadata.
+absl::StatusOr<SectionKeyAndMetadata> ExtractSectionKeyAndMetadata(
+    const schema::SectionObject* section);
 
 // Hash function for BufferKey
 struct BufferKeyHash {
@@ -150,6 +160,15 @@ class LitertLmLoader {
     return std::nullopt;
   };
 
+  std::optional<std::string> GetSectionMetadataValue(
+      BufferKey buffer_key, absl::string_view key) const;
+
+  std::optional<std::string> GetTFLiteModelMetadataValue(
+      ModelType model_type, absl::string_view key) const {
+    return GetSectionMetadataValue(
+        BufferKey(schema::AnySectionDataType_TFLiteModel, model_type), key);
+  }
+
   // Returns the tokenizer section buffer.
   litert::BufferRef<uint8_t> GetLlmMetadata() {
     return GetSectionBuffer(
@@ -213,6 +232,8 @@ class LitertLmLoader {
   // constraints
   ::std::unordered_map<BufferKey, std::string, BufferKeyHash>
       section_backend_constraint_;
+  ::std::unordered_map<BufferKey, SectionMetadata, BufferKeyHash>
+      section_metadata_;
 };
 
 }  // namespace litert::lm

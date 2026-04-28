@@ -535,6 +535,11 @@ class TfLiteModelResources : public ModelResources {
     return std::nullopt;
   }
 
+  std::optional<std::string> GetTFLiteModelMetadataValue(
+      ModelType model_type, absl::string_view key) override {
+    return std::nullopt;
+  }
+
   absl::StatusOr<std::reference_wrapper<ScopedFile>> GetScopedFile() override {
     return absl::UnimplementedError("GetScopedFile not implemented.");
   }

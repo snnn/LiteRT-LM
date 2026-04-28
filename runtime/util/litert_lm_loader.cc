@@ -63,45 +63,57 @@ absl::StatusOr<std::unique_ptr<MemoryMappedFile>> CreateMemoryMapFromScopedFile(
 
 }  // namespace
 
-absl::StatusOr<std::pair<BufferKey, std::optional<std::string>>>
-ExtractBufferKeyAndBackendConstraint(const schema::SectionObject* section) {
+absl::StatusOr<SectionKeyAndMetadata> ExtractSectionKeyAndMetadata(
+    const schema::SectionObject* section) {
   auto items = section->items();
   BufferKey buffer_key(section->data_type());
   std::optional<std::string> backend_constraint;
+  SectionMetadata metadata;
+  auto record_string_metadata = [&](absl::string_view key,
+                                    absl::string_view value) {
+    metadata[std::string(absl::AsciiStrToLower(key))] = std::string(value);
+  };
   // Extract the specific model type from the section items KeyValuePairs.
-  if ((section->data_type() == schema::AnySectionDataType_TFLiteModel ||
-       section->data_type() == schema::AnySectionDataType_TFLiteWeights) &&
-      items != nullptr) {
+  if (items != nullptr) {
     bool found_model_type = false;
     std::string model_type;
     for (size_t j = 0; j < items->size(); ++j) {
       auto item = items->Get(j);
-      if (item->key() &&
-          absl::AsciiStrToLower(item->key()->str()) == "model_type" &&
-          item->value()) {
-        found_model_type = true;
-        model_type = *(item->value_as_StringValue()->value());
+      if (item->key() == nullptr || item->value() == nullptr) {
+        continue;
       }
-      if (item->key() &&
-          absl::AsciiStrToLower(item->key()->str()) == "backend_constraint" &&
-          item->value()) {
-        backend_constraint = *(item->value_as_StringValue()->value());
+      if (auto string_value = item->value_as_StringValue();
+          string_value != nullptr && string_value->value() != nullptr) {
+        const std::string key = absl::AsciiStrToLower(item->key()->str());
+        const std::string value = string_value->value()->str();
+        record_string_metadata(key, value);
+        if (key == "model_type") {
+          found_model_type = true;
+          model_type = value;
+        } else if (key == "backend_constraint") {
+          backend_constraint = value;
+        }
       }
     }
-    if (found_model_type) {
-      ABSL_LOG(INFO) << "model_type: " << model_type;
-      ASSIGN_OR_RETURN(ModelType model_type_enum,
-                       StringToModelType(model_type));
-      buffer_key = BufferKey(section->data_type(), model_type_enum);
-    } else {
-      ABSL_LOG(WARNING) << "model_type not found, use kTfLitePrefillDecode";
-      // For backward compatibility, we will use the default model type if
-      // model_type is not found.
-      buffer_key =
-          BufferKey(section->data_type(), ModelType::kTfLitePrefillDecode);
+    if ((section->data_type() == schema::AnySectionDataType_TFLiteModel ||
+         section->data_type() == schema::AnySectionDataType_TFLiteWeights)) {
+      if (found_model_type) {
+        ABSL_LOG(INFO) << "model_type: " << model_type;
+        ASSIGN_OR_RETURN(ModelType model_type_enum,
+                         StringToModelType(model_type));
+        buffer_key = BufferKey(section->data_type(), model_type_enum);
+      } else {
+        ABSL_LOG(WARNING) << "model_type not found, use kTfLitePrefillDecode";
+        // For backward compatibility, we will use the default model type if
+        // model_type is not found.
+        buffer_key =
+            BufferKey(section->data_type(), ModelType::kTfLitePrefillDecode);
+      }
     }
   }
-  return std::make_pair(buffer_key, backend_constraint);
+  SectionKeyAndMetadata section_key_and_metadata{
+      buffer_key, backend_constraint, std::move(metadata)};
+  return section_key_and_metadata;
 }
 
 absl::Status LitertLmLoader::MapSection(BufferKey buffer_key,
@@ -212,14 +224,19 @@ absl::Status LitertLmLoader::Initialize() {
   auto sections = header_.metadata->section_metadata()->objects();
   for (size_t i = 0; i < sections->size(); ++i) {
     const schema::SectionObject* section = sections->Get(i);
-    ASSIGN_OR_RETURN(auto key_and_constraint,
-                     ExtractBufferKeyAndBackendConstraint(section));
-    BufferKey buffer_key = key_and_constraint.first;
-    if (key_and_constraint.second.has_value() &&
-        !key_and_constraint.second->empty()) {
-      section_backend_constraint_[buffer_key] = *key_and_constraint.second;
+    ASSIGN_OR_RETURN(auto section_key_and_metadata,
+                     ExtractSectionKeyAndMetadata(section));
+    BufferKey buffer_key = section_key_and_metadata.buffer_key;
+    if (section_key_and_metadata.backend_constraint.has_value() &&
+        !section_key_and_metadata.backend_constraint->empty()) {
+      section_backend_constraint_[buffer_key] =
+          *section_key_and_metadata.backend_constraint;
       ABSL_LOG(INFO) << "section_backend_constraint: "
-                     << *key_and_constraint.second;
+                     << *section_key_and_metadata.backend_constraint;
+    }
+    if (!section_key_and_metadata.metadata.empty()) {
+      section_metadata_[buffer_key] =
+          std::move(section_key_and_metadata.metadata);
     }
     if (section->begin_offset() > section->end_offset()) {
       return absl::InvalidArgumentError(
@@ -271,6 +288,19 @@ std::optional<litert::BufferRef<uint8_t>> LitertLmLoader::GetSectionBuffer(
   }
   // Return a BufferRef to the mapped section.
   return section_buffers_[buffer_key];
+}
+
+std::optional<std::string> LitertLmLoader::GetSectionMetadataValue(
+    BufferKey buffer_key, absl::string_view key) const {
+  auto metadata_it = section_metadata_.find(buffer_key);
+  if (metadata_it == section_metadata_.end()) {
+    return std::nullopt;
+  }
+  auto value_it = metadata_it->second.find(std::string(absl::AsciiStrToLower(key)));
+  if (value_it == metadata_it->second.end()) {
+    return std::nullopt;
+  }
+  return value_it->second;
 }
 
 absl::StatusOr<std::pair<size_t, size_t>> LitertLmLoader::GetSectionLocation(

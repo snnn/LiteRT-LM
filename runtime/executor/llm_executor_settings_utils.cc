@@ -14,6 +14,7 @@
 
 #include "runtime/executor/llm_executor_settings_utils.h"
 
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>  // NOLINT
 #include <memory>
@@ -45,6 +46,15 @@ namespace {
 // Default number of threads for WebGPU weight upload and kernel compilation.
 constexpr int kDefaultNumThreadsToUpload = 2;
 constexpr int kDefaultNumThreadsToCompile = 1;
+
+bool ShouldEnableFirstDecodeProfiling(
+    const AdvancedSettings& advanced_settings) {
+  if (!advanced_settings.dump_first_decode_profile_path.empty()) {
+    return true;
+  }
+  const char* value = std::getenv("LITERT_LM_DUMP_FIRST_DECODE_PROFILE_PATH");
+  return value != nullptr && value[0] != '\0';
+}
 
 }  // namespace
 
@@ -283,7 +293,7 @@ absl::StatusOr<litert::Options> CreateCompilationOptions(
       if (executor_settings.GetAdvancedSettings()) {
         advanced_settings = *executor_settings.GetAdvancedSettings();
       }
-      if (!advanced_settings.dump_first_decode_profile_path.empty()) {
+      if (ShouldEnableFirstDecodeProfiling(advanced_settings)) {
         LITERT_RETURN_IF_ERROR(runtime_options.SetEnableProfiling(true));
       }
       runtime_options.SetDisableDelegateClustering(

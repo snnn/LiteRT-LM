@@ -174,6 +174,11 @@ class ModelResources {
   virtual std::optional<std::string> GetTFLiteModelBackendConstraint(
       ModelType model_type) = 0;
 
+  // Returns a string-valued metadata entry attached to the TFLite model
+  // section. When the metadata key is not present, returns nullopt.
+  virtual std::optional<std::string> GetTFLiteModelMetadataValue(
+      ModelType model_type, absl::string_view key) = 0;
+
   // Builds a tokenizer instance from the model and returns it.
   virtual absl::StatusOr<std::unique_ptr<Tokenizer>> GetTokenizer() = 0;
 
