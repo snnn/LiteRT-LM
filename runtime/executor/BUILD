@@ -159,6 +159,8 @@ cc_library(
             "@litert//litert/cc:litert_macros",
             "@litert//litert/cc:litert_model",
             "@litert//litert/cc:litert_tensor_buffer",
+            "@litert//litert/cc/options:litert_cpu_options",
+            "@litert//litert/cc/options:litert_gpu_options",
         ],
     }),
 )
@@ -181,6 +183,8 @@ cc_test(
         "@litert//litert/cc:litert_ranked_tensor_type",
         "@litert//litert/cc:litert_tensor_buffer",
         "@litert//litert/cc:litert_tensor_buffer_types",
+        "@litert//litert/cc/options:litert_cpu_options",
+        "@litert//litert/cc/options:litert_gpu_options",
         "@litert//litert/test:matchers",
         "//runtime/components:model_resources",
         "//runtime/util:memory_mapped_file",
